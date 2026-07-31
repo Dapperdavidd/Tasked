@@ -1,0 +1,140 @@
+use chrono::{DateTime, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::FromRow;
+use uuid::Uuid;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ProgramKind {
+    Curriculum,
+    Routine,
+    Project,
+    Standing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum Intensity {
+    Light,
+    Standard,
+    Heavy,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum EnrollmentStatus {
+    Active,
+    Paused,
+    Completed,
+    Abandoned,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum DayStatus {
+    Open,
+    Complete,
+    Partial,
+    Missed,
+    Rest,
+    Frozen,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum StreakState {
+    Active,
+    AtRisk,
+    Repairable,
+    Broken,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct UserRow {
+    pub id: Uuid,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct ProgramRow {
+    pub id: Uuid,
+    pub author_id: Option<Uuid>,
+    pub title: String,
+    pub summary: Option<String>,
+    pub kind: ProgramKind,
+    pub duration_days: Option<i32>,
+    pub intensity: Option<Intensity>,
+    pub source_id: Option<Uuid>,
+    pub share_titles: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct TaskTemplateRow {
+    pub id: Uuid,
+    pub program_id: Uuid,
+    pub position: i32,
+    pub title: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub difficulty: i16,
+    pub estimated_minutes: i32,
+    pub cadence: Value,
+    pub points: i32,
+    pub paused_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct EnrollmentRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub program_id: Uuid,
+    pub cohort_id: Option<Uuid>,
+    pub timezone: String,
+    pub day_boundary_hour: i16,
+    pub start_date: NaiveDate,
+    pub is_standing: bool,
+    pub status: EnrollmentStatus,
+    pub materialised_through: Option<NaiveDate>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct DayRow {
+    pub id: Uuid,
+    pub enrollment_id: Uuid,
+    pub local_date: NaiveDate,
+    pub day_index: i32,
+    pub status: DayStatus,
+    pub available_points: i32,
+    pub earned_points: i32,
+    pub note: Option<String>,
+    pub opens_at: DateTime<Utc>,
+    pub closes_at: DateTime<Utc>,
+    pub finalised_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct TaskInstanceRow {
+    pub id: Uuid,
+    pub day_id: Uuid,
+    pub template_id: Uuid,
+    pub title: String,
+    pub points: i32,
+    pub position: i32,
+    pub is_floating: bool,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub skipped_reason: Option<String>,
+    pub proof_kind: Option<String>,
+    pub proof_value: Option<String>,
+}
