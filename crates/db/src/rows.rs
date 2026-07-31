@@ -233,3 +233,41 @@ pub struct StreakStateRow {
     pub repair_used_month: Option<NaiveDate>,
     pub state: StreakState,
 }
+
+#[derive(Clone, Debug, FromRow)]
+pub struct TodaySectionRow {
+    pub enrollment_id: Uuid,
+    pub day_id: Uuid,
+    pub program_id: Uuid,
+    pub title: String,
+    pub is_standing: bool,
+    pub day_index: i32,
+    pub duration_days: Option<i32>,
+    pub day_status: DayStatus,
+    pub available_points: i32,
+    pub earned_points: i32,
+    pub note: Option<String>,
+    pub streak_current: i32,
+    pub streak_longest: i32,
+    pub streak_freezes: i16,
+    pub streak_state: StreakState,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct WeekBucketRow {
+    pub enrollment_id: Uuid,
+    pub iso_year: i32,
+    pub iso_week: i32,
+    pub template_id: Uuid,
+    pub required: i32,
+    pub completed: i32,
+    pub points_each: i32,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct TaskTemplateCompletionRow {
+    pub template_id: Uuid,
+    pub title: String,
+    pub available_count: Option<i64>,
+    pub completed_count: Option<i64>,
+}

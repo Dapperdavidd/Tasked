@@ -13,4 +13,6 @@ pub mod rest_days;
 pub mod rls;
 pub mod rows;
 pub mod standing;
+pub mod stats;
 pub mod tasks;
+pub mod today;
