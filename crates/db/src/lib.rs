@@ -4,6 +4,7 @@
 pub mod artifacts;
 pub mod cohorts;
 pub mod devices;
+pub mod finalise;
 pub mod idempotency;
 pub mod jobs;
 pub mod materialise;
@@ -11,4 +12,5 @@ pub mod pool;
 pub mod rest_days;
 pub mod rls;
 pub mod rows;
+pub mod standing;
 pub mod tasks;

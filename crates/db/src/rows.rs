@@ -221,3 +221,15 @@ pub struct CohortPresenceRow {
     pub streak: i32,
     pub logged_today: bool,
 }
+
+#[derive(Clone, Debug, FromRow)]
+pub struct StreakStateRow {
+    pub enrollment_id: Uuid,
+    pub current: i32,
+    pub longest: i32,
+    pub freezes: i16,
+    pub clean_run: i16,
+    pub last_counted_date: Option<NaiveDate>,
+    pub repair_used_month: Option<NaiveDate>,
+    pub state: StreakState,
+}
