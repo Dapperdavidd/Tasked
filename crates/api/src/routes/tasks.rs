@@ -20,7 +20,8 @@ pub async fn complete_task(
 ) -> Result<HttpResponse, ApiError> {
     let mut tx = state.pool.begin().await?;
     rls::set_request_user(&mut tx, user_id.0).await?;
-    let task = tasks_db::complete_task(&mut tx, *path, body.completed_at.unwrap_or_else(Utc::now)).await?;
+    let task =
+        tasks_db::complete_task(&mut tx, *path, body.completed_at.unwrap_or_else(Utc::now)).await?;
     tx.commit().await?;
     Ok(HttpResponse::Ok().json(TaskMutationResponse::from(task)))
 }

@@ -3,6 +3,8 @@ use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
+    #[error("bad request: {0}")]
+    BadRequest(String),
     #[error("missing X-User-Id header")]
     MissingUser,
     #[error("invalid X-User-Id header")]
@@ -14,6 +16,7 @@ pub enum ApiError {
 impl ResponseError for ApiError {
     fn status_code(&self) -> StatusCode {
         match self {
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::MissingUser | Self::InvalidUser => StatusCode::UNAUTHORIZED,
             Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

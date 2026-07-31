@@ -23,7 +23,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(state.clone()))
             .configure(routes::configure)
     })
-        .bind(bind)?
-        .run()
-        .await
+    .bind(bind)?
+    .run()
+    .await
 }

@@ -79,15 +79,12 @@ async fn user_local_today(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
 ) -> Result<chrono::NaiveDate, ApiError> {
-    let (timezone, boundary): (String, i16) = sqlx::query_as(
-        "select timezone, day_boundary_hour from user_settings where user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&mut **tx)
-    .await?;
-    let tz = timezone
-        .parse::<Tz>()
-        .map_err(|_| ApiError::InvalidUser)?;
+    let (timezone, boundary): (String, i16) =
+        sqlx::query_as("select timezone, day_boundary_hour from user_settings where user_id = $1")
+            .bind(user_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    let tz = timezone.parse::<Tz>().map_err(|_| ApiError::InvalidUser)?;
     calendar::enrollment_today(Utc::now(), boundary as u32, tz).map_err(|_| ApiError::InvalidUser)
 }
 

@@ -1,7 +1,12 @@
 use actix_web::web;
 
+pub mod cohorts;
+pub mod devices;
+pub mod enrollments;
 pub mod health;
+pub mod rest_days;
 pub mod standing;
+pub mod stats;
 pub mod tasks;
 pub mod today;
 
@@ -11,5 +16,18 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(tasks::complete_task)
         .service(tasks::uncomplete_task)
         .service(tasks::skip_task)
-        .service(standing::get_standing);
+        .service(standing::get_standing)
+        .service(standing::create_standing)
+        .service(standing::pause_standing)
+        .service(rest_days::declare_rest_day)
+        .service(rest_days::delete_rest_day)
+        .service(devices::register_device)
+        .service(devices::disable_device)
+        .service(stats::stats)
+        .service(cohorts::create_cohort)
+        .service(cohorts::create_invite)
+        .service(cohorts::join_cohort)
+        .service(cohorts::presence)
+        .service(enrollments::list_enrollments)
+        .service(enrollments::patch_enrollment);
 }
