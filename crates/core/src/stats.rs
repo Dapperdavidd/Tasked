@@ -42,6 +42,21 @@ impl DayTotals {
             is_rest: true,
         }
     }
+
+    /// A frozen day: a miss that a banked freeze absorbed.
+    ///
+    /// It stays in the denominator with nothing earned. A freeze protects the
+    /// *streak*, not the consistency figure — treating it as a rest day would
+    /// let someone bank three freezes and report 100% consistency for a week
+    /// they did nothing in, which is exactly the number the product says it
+    /// treats as primary.
+    pub fn frozen(available: i32) -> Self {
+        Self {
+            earned: 0,
+            available,
+            is_rest: false,
+        }
+    }
 }
 
 /// Earned over available as a percentage, or `None` when nothing was available.
@@ -165,6 +180,16 @@ mod tests {
             consistency(&worked, &[]),
             consistency(&worked_then_rested, &[])
         );
+    }
+
+    #[test]
+    fn a_frozen_day_still_counts_against_consistency() {
+        let rested = [DayTotals::new(100, 100), DayTotals::rest()];
+        let frozen = [DayTotals::new(100, 100), DayTotals::frozen(100)];
+
+        assert_eq!(consistency(&rested, &[]), Some(100));
+        // The freeze saved the streak. It does not launder the missed day.
+        assert_eq!(consistency(&frozen, &[]), Some(50));
     }
 
     #[test]
