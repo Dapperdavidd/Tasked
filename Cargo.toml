@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "crates/core",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.82"
+license = "UNLICENSED"
+
+[workspace.dependencies]
+chrono = { version = "0.4.38", default-features = false, features = ["clock", "serde"] }
+chrono-tz = "0.10.0"
+proptest = "1.5.0"
