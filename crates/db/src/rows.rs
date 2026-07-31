@@ -138,3 +138,86 @@ pub struct TaskInstanceRow {
     pub proof_kind: Option<String>,
     pub proof_value: Option<String>,
 }
+
+#[derive(Clone, Debug, FromRow)]
+pub struct JobRow {
+    pub id: Uuid,
+    pub kind: String,
+    pub payload: Value,
+    pub run_at: DateTime<Utc>,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub locked_until: Option<DateTime<Utc>>,
+    pub failed_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum PushProvider {
+    Expo,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum DevicePlatform {
+    Ios,
+    Android,
+    Web,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct IdempotencyKeyRow {
+    pub user_id: Uuid,
+    pub key: String,
+    pub method: String,
+    pub path: String,
+    pub request_hash: Vec<u8>,
+    pub status_code: i32,
+    pub response_body: Value,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct RestDayRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub local_date: NaiveDate,
+    pub reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct DeviceRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub push_provider: PushProvider,
+    pub push_token: String,
+    pub platform: Option<DevicePlatform>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct CompletionArtifactRow {
+    pub id: Uuid,
+    pub enrollment_id: Uuid,
+    pub image_key: Option<String>,
+    pub pdf_key: Option<String>,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct CohortPresenceRow {
+    pub cohort_id: Uuid,
+    pub user_id: Uuid,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub streak: i32,
+    pub logged_today: bool,
+}

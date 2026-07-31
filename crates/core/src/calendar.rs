@@ -237,8 +237,7 @@ mod tests {
     #[test]
     fn today_agrees_with_the_window_on_a_fall_back_day() {
         let now = utc(2026, 11, 1, 7, 30); // 02:30 EST, after the repeated hour
-        let today =
-            enrollment_today(now, 3, chrono_tz::America::New_York).expect("today resolves");
+        let today = enrollment_today(now, 3, chrono_tz::America::New_York).expect("today resolves");
 
         assert_eq!(today, date(2026, 10, 31));
 

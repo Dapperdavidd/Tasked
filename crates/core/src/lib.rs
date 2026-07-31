@@ -4,4 +4,6 @@
 pub mod cadence;
 pub mod calendar;
 pub mod scoring;
+pub mod stats;
 pub mod streak;
+pub mod weekly;
