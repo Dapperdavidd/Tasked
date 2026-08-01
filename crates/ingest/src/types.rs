@@ -115,6 +115,22 @@ pub enum Warning {
     /// A day inside the duration ended up with nothing on it. PRD F1 requires
     /// every day to carry at least one task.
     EmptyDay { day_index: u16 },
+    /// The model returned a value outside its allowed range and it was pulled
+    /// back into range rather than the task being discarded.
+    ValueClamped {
+        task_index: Option<u16>,
+        field: ClampedField,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClampedField {
+    Difficulty,
+    EstimatedMinutes,
+    DurationDays,
+    DayOffset,
+    Confidence,
 }
 
 #[cfg(test)]

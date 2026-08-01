@@ -20,7 +20,13 @@
 //! manually from three cadence presets and never touch this pipeline.
 
 pub mod calibrate;
+pub mod classify;
+pub mod generate;
+pub mod source;
 pub mod types;
 
 pub use calibrate::{calibrate, project, Calibration};
-pub use types::{GeneratedProgram, GeneratedTask, Intensity, ProgramKind, Warning};
+pub use classify::{Classification, ClassifyError, ClassifyOutcome};
+pub use generate::{merge, validate, GenerateError, Validated};
+pub use source::{chunk, normalise, Extracted, NormaliseError, Normalised, SourceKind};
+pub use types::{ClampedField, GeneratedProgram, GeneratedTask, Intensity, ProgramKind, Warning};

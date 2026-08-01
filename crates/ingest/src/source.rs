@@ -20,8 +20,13 @@ pub const SCANNED_PDF_CHARS_PER_PAGE: usize = 100;
 /// drops the second half, so long sources are cut and reduced.
 pub const CHUNK_TARGET_CHARS: usize = 12_000;
 
-/// Sources with fewer characters than this are almost certainly not a plan.
-pub const MIN_USABLE_CHARS: usize = 24;
+/// Below this, there is nothing to send a model.
+///
+/// Deliberately low. "Run 5k in 8 weeks" is a legitimate source — the PRD's own
+/// first-run example is a typed sentence — so this only catches the genuinely
+/// empty. Deciding whether something *is* a plan is stage 2's job, and it has a
+/// model to do it with.
+pub const MIN_USABLE_CHARS: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -216,7 +221,10 @@ mod tests {
 
     #[test]
     fn routes_mime_types_to_extractors() {
-        assert_eq!(SourceKind::from_mime("application/pdf"), Some(SourceKind::Pdf));
+        assert_eq!(
+            SourceKind::from_mime("application/pdf"),
+            Some(SourceKind::Pdf)
+        );
         assert_eq!(
             SourceKind::from_mime("text/plain; charset=utf-8"),
             Some(SourceKind::Text)
@@ -230,10 +238,13 @@ mod tests {
     fn normalisation_makes_the_content_hash_stable() {
         // The same document, pasted twice, with different line endings and
         // trailing whitespace. One document, one hash, one generation charge.
-        let a = normalise(&extracted("Day 1: run  \r\nDay 2: rest\r\n\r\n\r\n"), SourceKind::Text)
-            .expect("normalises");
-        let b = normalise(&extracted("Day 1: run\nDay 2: rest"), SourceKind::Text)
-            .expect("normalises");
+        let a = normalise(
+            &extracted("Day 1: run  \r\nDay 2: rest\r\n\r\n\r\n"),
+            SourceKind::Text,
+        )
+        .expect("normalises");
+        let b =
+            normalise(&extracted("Day 1: run\nDay 2: rest"), SourceKind::Text).expect("normalises");
 
         assert_eq!(a.content_hash, b.content_hash);
         assert_eq!(a.text, "Day 1: run\nDay 2: rest");
@@ -242,7 +253,8 @@ mod tests {
     #[test]
     fn different_content_hashes_differently() {
         let a = normalise(&extracted("Day 1: run a mile"), SourceKind::Text).expect("normalises");
-        let b = normalise(&extracted("Day 1: run two miles"), SourceKind::Text).expect("normalises");
+        let b =
+            normalise(&extracted("Day 1: run two miles"), SourceKind::Text).expect("normalises");
         assert_ne!(a.content_hash, b.content_hash);
         assert_eq!(a.hash_hex().len(), 64);
     }
@@ -252,6 +264,22 @@ mod tests {
         let result = normalise(&extracted("Day 1:\tspeed work\u{0}\u{7}"), SourceKind::Text)
             .expect("normalises");
         assert_eq!(result.text, "Day 1:\tspeed work");
+    }
+
+    /// The PRD's own first-run example is a typed sentence, so a terse but real
+    /// plan must survive stage 1 and reach the classifier.
+    #[test]
+    fn a_short_typed_plan_is_not_rejected_as_empty() {
+        for plan in [
+            "Run 5k in 8 weeks",
+            "Learn Rust in 100 days",
+            "Physio: 3x a week",
+        ] {
+            assert!(
+                normalise(&extracted(plan), SourceKind::Text).is_ok(),
+                "rejected a legitimate plan: {plan}"
+            );
+        }
     }
 
     #[test]
@@ -268,7 +296,10 @@ mod tests {
             text: "Chapter 1 ".repeat(3),
             pages: Some(40),
         };
-        assert_eq!(normalise(&scan, SourceKind::Pdf), Err(NormaliseError::NeedsOcr));
+        assert_eq!(
+            normalise(&scan, SourceKind::Pdf),
+            Err(NormaliseError::NeedsOcr)
+        );
 
         // The same sparse text without a page count is just short text.
         let unpaged = Extracted {

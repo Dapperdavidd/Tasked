@@ -5,14 +5,18 @@ pub mod days;
 pub mod devices;
 pub mod enrollments;
 pub mod health;
+pub mod programs;
 pub mod rest_days;
 pub mod standing;
 pub mod stats;
+pub mod sync;
 pub mod tasks;
 pub mod today;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(health::health)
+        .service(programs::create_program)
+        .service(sync::sync)
         .service(today::today)
         .service(tasks::complete_task)
         .service(tasks::uncomplete_task)
