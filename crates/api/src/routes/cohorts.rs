@@ -35,6 +35,22 @@ pub async fn create_cohort(
     .bind(body.locked_start)
     .execute(&mut *tx)
     .await?;
+
+    sqlx::query(
+        r#"
+        update enrollments
+        set cohort_id = $1
+        where user_id = $2
+          and program_id = $3
+          and not is_standing
+        "#,
+    )
+    .bind(id)
+    .bind(user_id.0)
+    .bind(body.program_id)
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
 
     Ok(HttpResponse::Ok().json(CohortResponse {
@@ -97,6 +113,23 @@ pub async fn join_cohort(
     .bind(&body.token)
     .fetch_one(&mut *tx)
     .await?;
+
+    sqlx::query(
+        r#"
+        update enrollments e
+        set cohort_id = $1
+        from cohorts c
+        where c.id = $1
+          and e.user_id = $2
+          and e.program_id = c.program_id
+          and not e.is_standing
+        "#,
+    )
+    .bind(cohort_id)
+    .bind(user_id.0)
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
     Ok(HttpResponse::Ok().json(JoinResponse { cohort_id }))
 }

@@ -45,5 +45,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(days::repair_day)
         .service(enrollments::list_enrollments)
         .service(enrollments::enrollment_summary)
+        .service(enrollments::return_enrollment)
         .service(enrollments::patch_enrollment);
 }

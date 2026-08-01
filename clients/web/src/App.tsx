@@ -7,6 +7,7 @@ import {
   saveSettings,
   type ClientSettings,
   type CompletionSummary,
+  type CohortPresence,
   type Enrollment,
   type IngestJob,
   type NotificationEvent,
@@ -26,6 +27,8 @@ type AppState = {
   enrollments: Enrollment[];
   stats: StatsResponse | null;
   summary: CompletionSummary | null;
+  cohortPresence: CohortPresence[];
+  inviteToken: string | null;
   notifications: NotificationEvent[];
   ingest: IngestJob | null;
   status: string;
@@ -39,6 +42,8 @@ const initialState: AppState = {
   enrollments: [],
   stats: null,
   summary: null,
+  cohortPresence: [],
+  inviteToken: null,
   notifications: [],
   ingest: null,
   status: "Ready",
@@ -50,6 +55,9 @@ export function App(): ReactElement {
   const client = useMemo(() => new ApiClient(state.settings), [state.settings]);
   const program = state.today?.sections.find((section) => section.kind === "Program") ?? null;
   const standing = state.today?.sections.find((section) => section.kind === "Standing") ?? null;
+  const activeEnrollment = program ? state.enrollments.find((enrollment) => enrollment.id === program.enrollment_id) ?? null : null;
+  const [returnDismissedFor, setReturnDismissedFor] = useState<string | null>(null);
+  const showReturn = state.today?.lapsed_days !== null && state.today?.lapsed_days !== undefined && returnDismissedFor !== state.today.local_date;
 
   useEffect(() => {
     void refreshPrimary();
@@ -80,7 +88,10 @@ export function App(): ReactElement {
         client.enrollments(),
         client.notifications().catch(() => [])
       ]);
-      return { today, enrollments, notifications };
+      const active = today.sections.find((section) => section.kind === "Program") ?? null;
+      const enrollment = active ? enrollments.find((item) => item.id === active.enrollment_id) ?? null : null;
+      const cohortPresence = enrollment?.cohort_id ? await client.cohortPresence(enrollment.cohort_id, today.local_date).catch(() => []) : [];
+      return { today, enrollments, notifications, cohortPresence };
     });
   }
 
@@ -88,6 +99,9 @@ export function App(): ReactElement {
     setState((current) => ({ ...current, view }));
     if (view === "heatmap" && state.stats === null && program) {
       await loadStats(program);
+    }
+    if (view === "cohort" && activeEnrollment?.cohort_id && state.today) {
+      await loadCohort(activeEnrollment.cohort_id, state.today.local_date);
     }
   }
 
@@ -178,6 +192,72 @@ export function App(): ReactElement {
     });
   }
 
+  async function patchEnrollment(id: string, status: "active" | "paused" | "completed" | "abandoned"): Promise<void> {
+    await run("Enrollment updated", async () => {
+      await client.patchEnrollment(id, { status });
+      const [today, enrollments] = await Promise.all([client.today(), client.enrollments()]);
+      return { today, enrollments };
+    });
+  }
+
+  async function returnEnrollment(id: string, action: "resume" | "restart" | "scale_down"): Promise<void> {
+    await run(returnActionStatus(action), async () => {
+      await client.returnEnrollment(id, action);
+      const [today, enrollments] = await Promise.all([client.today(), client.enrollments()]);
+      return { today, enrollments };
+    });
+  }
+
+  async function createCohort(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!activeEnrollment) {
+      setState((current) => ({ ...current, error: "Start a bounded program before creating a cohort." }));
+      return;
+    }
+    const form = new FormData(event.currentTarget);
+    await run("Cohort created", async () => {
+      const cohort = await client.createCohort(activeEnrollment.program_id, String(form.get("name") ?? ""));
+      const invite = await client.createInvite(cohort.id);
+      const [today, enrollments] = await Promise.all([client.today(), client.enrollments()]);
+      const cohortPresence = await client.cohortPresence(cohort.id, today.local_date).catch(() => []);
+      return { today, enrollments, inviteToken: invite.token, cohortPresence };
+    });
+  }
+
+  async function createInvite(): Promise<void> {
+    if (!activeEnrollment?.cohort_id) {
+      setState((current) => ({ ...current, error: "Create a cohort first." }));
+      return;
+    }
+    await run("Invite created", async () => {
+      const invite = await client.createInvite(activeEnrollment.cohort_id ?? "");
+      return { inviteToken: invite.token };
+    });
+  }
+
+  async function joinCohort(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const token = String(form.get("token") ?? "").trim();
+    if (!token) {
+      setState((current) => ({ ...current, error: "Invite token is required." }));
+      return;
+    }
+    await run("Joined cohort", async () => {
+      const joined = await client.joinCohort(token);
+      const [today, enrollments] = await Promise.all([client.today(), client.enrollments()]);
+      const cohortPresence = await client.cohortPresence(joined.cohort_id, today.local_date).catch(() => []);
+      return { today, enrollments, cohortPresence };
+    });
+  }
+
+  async function loadCohort(cohortId: string, localDate: string): Promise<void> {
+    await run("Cohort loaded", async () => {
+      const cohortPresence = await client.cohortPresence(cohortId, localDate);
+      return { cohortPresence };
+    });
+  }
+
   async function testNotification(): Promise<void> {
     await run("Notification queued", async () => {
       await client.enqueueTestNotification();
@@ -214,7 +294,21 @@ export function App(): ReactElement {
         {state.error ? <div className="banner error">{state.error}</div> : null}
         <div className="banner">{state.status}</div>
         {state.view === "today" ? (
-          <TodayView
+          showReturn ? (
+            <ReturnView
+              lapsedDays={state.today?.lapsed_days ?? 0}
+              program={program}
+              activeEnrollment={activeEnrollment}
+              resume={() => {
+                setReturnDismissedFor(state.today?.local_date ?? null);
+                if (activeEnrollment) {
+                  void returnEnrollment(activeEnrollment.id, "resume");
+                }
+              }}
+              restart={() => activeEnrollment ? void returnEnrollment(activeEnrollment.id, "restart") : undefined}
+              scaleDown={() => activeEnrollment ? void returnEnrollment(activeEnrollment.id, "scale_down") : undefined}
+            />
+          ) : <TodayView
             sections={state.today?.sections ?? []}
             program={program}
             standing={standing}
@@ -228,10 +322,10 @@ export function App(): ReactElement {
           />
         ) : null}
         {state.view === "ingest" ? <IngestView job={state.ingest} submit={(event) => void ingest(event)} confirm={() => void confirmDraft()} /> : null}
-        {state.view === "programs" ? <ProgramView enrollments={state.enrollments} program={program} changeView={(view) => void changeView(view)} toggleTask={(task) => void toggleTask(task)} saveNote={(dayId, note) => void saveNote(dayId, note)} repair={(dayId) => void repair(dayId)} /> : null}
+        {state.view === "programs" ? <ProgramView enrollments={state.enrollments} program={program} activeEnrollment={activeEnrollment} changeView={(view) => void changeView(view)} patchEnrollment={(id, status) => void patchEnrollment(id, status)} toggleTask={(task) => void toggleTask(task)} saveNote={(dayId, note) => void saveNote(dayId, note)} repair={(dayId) => void repair(dayId)} /> : null}
         {state.view === "standing" ? <StandingView standing={standing} createStanding={(event) => void createStanding(event)} toggleTask={(task) => void toggleTask(task)} /> : null}
         {state.view === "heatmap" ? <HeatmapView program={program} stats={state.stats} summary={state.summary} loadStats={() => void loadStats()} /> : null}
-        {state.view === "cohort" ? <CohortView /> : null}
+        {state.view === "cohort" ? <CohortView activeEnrollment={activeEnrollment} presence={state.cohortPresence} inviteToken={state.inviteToken} createCohort={(event) => void createCohort(event)} createInvite={() => void createInvite()} joinCohort={(event) => void joinCohort(event)} /> : null}
         {state.view === "settings" ? <SettingsView settings={state.settings} save={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} /> : null}
       </main>
     </>
@@ -310,6 +404,35 @@ function TodayView(props: {
   );
 }
 
+function ReturnView(props: {
+  lapsedDays: number;
+  program: TodaySection | null;
+  activeEnrollment: Enrollment | null;
+  resume: () => void;
+  restart: () => void;
+  scaleDown: () => void;
+}): ReactElement {
+  return (
+    <section className="return-screen">
+      <div className="panel return-panel">
+        <p className="eyebrow">Return</p>
+        <h2>{props.program ? props.program.title : "Pick up where you left off"}</h2>
+        <p>{props.lapsedDays} days away. Your best run is still preserved.</p>
+        <div className="artifact">
+          <Metric label="Longest streak" value={props.program ? String(props.program.streak.longest) : "0"} sub="preserved" />
+          <Metric label="Current run" value={props.program ? String(props.program.streak.current) : "0"} sub="today" />
+          <Metric label="Status" value={props.activeEnrollment?.status ?? "No program"} sub="bounded enrollment" />
+        </div>
+        <div className="return-actions">
+          <button className="button primary" type="button" onClick={props.resume}>Resume from today</button>
+          <button className="button subtle" type="button" onClick={props.restart}>Restart at day one</button>
+          <button className="button subtle" type="button" onClick={props.scaleDown}>Scale down</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SectionCard(props: { section: TodaySection; toggleTask: (task: TaskInstance) => void; saveNote: (dayId: string, note: string) => void; repair: (dayId: string) => void }): ReactElement {
   const completed = props.section.tasks.filter(done).length;
   const sorted = [...props.section.tasks].sort((a, b) => Number(done(a)) - Number(done(b)) || a.position - b.position);
@@ -382,7 +505,16 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
   );
 }
 
-function ProgramView(props: { enrollments: Enrollment[]; program: TodaySection | null; changeView: (view: View) => void; toggleTask: (task: TaskInstance) => void; saveNote: (dayId: string, note: string) => void; repair: (dayId: string) => void }): ReactElement {
+function ProgramView(props: {
+  enrollments: Enrollment[];
+  program: TodaySection | null;
+  activeEnrollment: Enrollment | null;
+  changeView: (view: View) => void;
+  patchEnrollment: (id: string, status: "active" | "paused" | "completed" | "abandoned") => void;
+  toggleTask: (task: TaskInstance) => void;
+  saveNote: (dayId: string, note: string) => void;
+  repair: (dayId: string) => void;
+}): ReactElement {
   const bounded = props.enrollments.filter((item) => !item.is_standing);
   return (
     <section className="panel">
@@ -394,6 +526,15 @@ function ProgramView(props: { enrollments: Enrollment[]; program: TodaySection |
         <button className="button primary" type="button" onClick={() => props.changeView("ingest")}>New program</button>
       </div>
       {props.program ? <SectionCard section={props.program} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyProgram changeView={props.changeView} />}
+      {props.activeEnrollment ? (
+        <div className="action-row">
+          <button className="button subtle" type="button" onClick={() => props.patchEnrollment(props.activeEnrollment?.id ?? "", props.activeEnrollment?.status === "Paused" ? "active" : "paused")}>
+            {props.activeEnrollment.status === "Paused" ? "Resume" : "Pause"}
+          </button>
+          <button className="button subtle" type="button" onClick={() => props.patchEnrollment(props.activeEnrollment?.id ?? "", "completed")}>Mark complete</button>
+          <button className="button danger" type="button" onClick={() => props.patchEnrollment(props.activeEnrollment?.id ?? "", "abandoned")}>Abandon</button>
+        </div>
+      ) : null}
       <div className="list">
         {bounded.map((enrollment) => <div className="list-row" key={enrollment.id}><strong>{enrollment.status}</strong><span>{enrollment.start_date}</span><span>{enrollment.timezone}</span></div>)}
       </div>
@@ -431,12 +572,20 @@ function StandingView(props: { standing: TodaySection | null; createStanding: (e
 }
 
 function HeatmapView(props: { program: TodaySection | null; stats: StatsResponse | null; summary: CompletionSummary | null; loadStats: () => void }): ReactElement {
+  const days = props.stats?.days ?? [];
   return (
     <section className="split">
       <div className="panel">
         <h2>{props.program ? props.program.title : "Heatmap"}</h2>
-        <MiniHeatmap section={props.program} changeView={() => undefined} />
+        <HeatmapGrid days={days} fallbackSection={props.program} />
         {props.summary ? <p className="counter">{props.summary.payload.days_logged}/{props.summary.payload.days_total} days logged · longest {props.summary.payload.longest_streak}</p> : null}
+        {props.summary ? (
+          <div className="artifact">
+            <Metric label="Completion" value={props.summary.payload.completion_rate === null ? "0%" : `${Math.round(props.summary.payload.completion_rate)}%`} sub="finalised days" />
+            <Metric label="Tasks" value={String(props.summary.payload.tasks_completed)} sub="completed" />
+            <Metric label="Hours" value={String(Math.round(props.summary.payload.hours_invested))} sub="invested" />
+          </div>
+        ) : null}
       </div>
       <div className="panel">
         <h2>Task completion</h2>
@@ -449,8 +598,56 @@ function HeatmapView(props: { program: TodaySection | null; stats: StatsResponse
   );
 }
 
-function CohortView(): ReactElement {
-  return <section className="panel narrow"><h2>Cohort</h2><div className="empty">Presence endpoints are ready. Invite creation and member rows are the next UI layer for this tab.</div></section>;
+function CohortView(props: {
+  activeEnrollment: Enrollment | null;
+  presence: CohortPresence[];
+  inviteToken: string | null;
+  createCohort: (event: FormEvent<HTMLFormElement>) => void;
+  createInvite: () => void;
+  joinCohort: (event: FormEvent<HTMLFormElement>) => void;
+}): ReactElement {
+  const hasCohort = props.activeEnrollment?.cohort_id !== null && props.activeEnrollment?.cohort_id !== undefined;
+  return (
+    <section className="split">
+      <div className="panel narrow">
+        <div className="panel-head">
+          <div>
+            <h2>{hasCohort ? "Cohort presence" : "Create a cohort"}</h2>
+            <p>Presence only. No task titles, notes, or standing list data.</p>
+          </div>
+          {hasCohort ? <button className="button subtle" type="button" onClick={props.createInvite}>Invite</button> : null}
+        </div>
+        {hasCohort ? (
+          <div className="presence-list">
+            {props.presence.map((member) => (
+              <div className="presence-row" key={member.user_id}>
+                <span className={`avatar-dot ${member.logged_today ? "online" : ""}`}>{initials(member.display_name ?? "You")}</span>
+                <div>
+                  <strong>{member.display_name ?? "Member"}</strong>
+                  <p>{member.logged_today ? "Logged today" : "Not logged today"}</p>
+                </div>
+                <span>{member.streak} days</span>
+              </div>
+            ))}
+            {props.presence.length === 0 ? <div className="empty">No presence rows yet.</div> : null}
+          </div>
+        ) : (
+          <form className="form" onSubmit={props.createCohort}>
+            <input name="name" placeholder="Cohort name, e.g. 5K Crew" />
+            <button className="button primary" type="submit">Create cohort</button>
+          </form>
+        )}
+        {props.inviteToken ? <div className="invite-token"><span>Invite token</span><code>{props.inviteToken}</code></div> : null}
+      </div>
+      <div className="panel narrow">
+        <h2>Join with token</h2>
+        <form className="form" onSubmit={props.joinCohort}>
+          <input name="token" placeholder="Paste invite token" />
+          <button className="button primary" type="submit">Join cohort</button>
+        </form>
+      </div>
+    </section>
+  );
 }
 
 function SettingsView(props: { settings: ClientSettings; save: (event: FormEvent<HTMLFormElement>) => void; testNotification: () => void; refresh: () => void }): ReactElement {
@@ -509,6 +706,20 @@ function MiniHeatmap(props: { section: TodaySection | null; changeView: (view: V
   );
 }
 
+function HeatmapGrid(props: { days: StatsResponse["days"]; fallbackSection: TodaySection | null }): ReactElement {
+  if (props.days.length === 0) {
+    return <MiniHeatmap section={props.fallbackSection} changeView={() => undefined} />;
+  }
+  return (
+    <>
+      <div className="heatmap full">
+        {props.days.map((day) => <span className={`cell ${statusClass(day.status, scoreFromDay(day))}`} title={`${day.local_date} · ${day.status}`} key={day.id} />)}
+      </div>
+      <div className="legend"><span>Missed</span><span>Low</span><span>Medium</span><span>High</span><span>Perfect</span></div>
+    </>
+  );
+}
+
 function Metric(props: { label: string; value: string; sub: string }): ReactElement {
   return <div className="metric"><span>{props.label}</span><strong>{props.value}</strong><p>{props.sub}</p></div>;
 }
@@ -541,6 +752,17 @@ function pageTitle(view: View): string {
       return "Cohort";
     case "settings":
       return "Settings";
+  }
+}
+
+function returnActionStatus(action: "resume" | "restart" | "scale_down"): string {
+  switch (action) {
+    case "resume":
+      return "Program resumed";
+    case "restart":
+      return "Program restarted";
+    case "scale_down":
+      return "Program scaled down";
   }
 }
 
@@ -578,6 +800,39 @@ function heatClass(value: number): string {
     return "low";
   }
   return "missed";
+}
+
+function statusClass(status: string, score: number): string {
+  if (status === "Complete") {
+    return "perfect";
+  }
+  if (status === "Partial") {
+    return "medium";
+  }
+  if (status === "Rest") {
+    return "rest";
+  }
+  if (status === "Frozen") {
+    return "frozen";
+  }
+  return heatClass(score);
+}
+
+function scoreFromDay(day: StatsResponse["days"][number]): number {
+  if (day.available_points <= 0) {
+    return 0;
+  }
+  return Math.round((day.earned_points / day.available_points) * 100);
+}
+
+function initials(name: string): string {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0] ?? "")
+    .join("")
+    .toUpperCase() || "M";
 }
 
 function asIntensity(value: FormDataEntryValue | null): Intensity {

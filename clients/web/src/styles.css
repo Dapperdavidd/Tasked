@@ -200,6 +200,11 @@ h3 {
   background: rgba(205, 233, 125, 0.12);
 }
 
+.button.danger {
+  border-color: rgba(255, 125, 125, 0.32);
+  color: #ffc7c7;
+}
+
 .icon-button {
   width: 42px;
   padding: 0;
@@ -403,7 +408,8 @@ h3 {
 
 .preview-row,
 .list-row,
-.notification-row {
+.notification-row,
+.presence-row {
   display: grid;
   grid-template-columns: minmax(80px, auto) minmax(0, 1fr) auto;
   gap: 12px;
@@ -436,11 +442,102 @@ h3 {
   color: #bcb6ac;
 }
 
+.action-row,
+.artifact {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, auto));
+  gap: 10px;
+  align-items: center;
+  margin: 14px 0;
+}
+
+.artifact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.return-screen {
+  display: grid;
+  min-height: 58vh;
+  place-items: center;
+}
+
+.return-panel {
+  width: min(760px, 100%);
+}
+
+.return-panel h2 {
+  max-width: 12ch;
+  margin-bottom: 12px;
+  font-size: 40px;
+  line-height: 1.05;
+}
+
+.return-actions {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.presence-list {
+  display: grid;
+  gap: 4px;
+}
+
+.presence-row {
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+}
+
+.presence-row p {
+  margin-bottom: 0;
+}
+
+.avatar-dot {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 999px;
+  background: #2d2d2d;
+  color: #f4f1ec;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.avatar-dot.online {
+  background: #f3efe7;
+  color: #111;
+}
+
+.invite-token {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.invite-token span {
+  color: #a8a39a;
+  font-size: 13px;
+}
+
+.invite-token code {
+  overflow-wrap: anywhere;
+  color: #fff;
+}
+
 .heatmap {
   display: grid;
   grid-template-columns: repeat(7, minmax(18px, 1fr));
   gap: 8px;
   margin-top: 16px;
+}
+
+.heatmap.full {
+  grid-template-columns: repeat(14, minmax(16px, 1fr));
 }
 
 .cell {
@@ -468,6 +565,16 @@ h3 {
 
 .cell.missed {
   outline: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cell.rest {
+  background: transparent;
+  outline: 1px dashed rgba(255, 255, 255, 0.26);
+}
+
+.cell.frozen {
+  background: #202020;
+  outline: 2px solid rgba(243, 239, 231, 0.5);
 }
 
 .legend {
@@ -507,7 +614,7 @@ h3 {
   }
 
   .main {
-    padding: 18px;
+    padding: 18px 18px 96px;
   }
 
   .metrics,
@@ -517,6 +624,19 @@ h3 {
 }
 
 @media (max-width: 560px) {
+  h1 {
+    font-size: 32px;
+  }
+
+  h2,
+  h3 {
+    font-size: 17px;
+  }
+
+  .banner {
+    font-size: 13px;
+  }
+
   .topbar,
   .panel-head,
   .section-title {
@@ -529,7 +649,29 @@ h3 {
   }
 
   .nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    z-index: 10;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(9, 9, 9, 0.94);
+    backdrop-filter: blur(16px);
+  }
+
+  .brand {
+    margin-bottom: 0;
+  }
+
+  .nav-item {
+    gap: 4px;
+    flex-direction: column;
+    min-height: 48px;
+    padding: 6px;
+    font-size: 11px;
   }
 
   .task-row {
@@ -541,7 +683,24 @@ h3 {
   }
 
   .preview-row,
-  .list-row {
+  .list-row,
+  .action-row,
+  .artifact,
+  .return-actions {
     grid-template-columns: 1fr;
+  }
+
+  .return-screen {
+    min-height: auto;
+    place-items: stretch;
+  }
+
+  .return-panel h2 {
+    max-width: 100%;
+    font-size: 30px;
+  }
+
+  .heatmap.full {
+    grid-template-columns: repeat(7, minmax(16px, 1fr));
   }
 }

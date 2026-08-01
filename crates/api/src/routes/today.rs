@@ -28,6 +28,7 @@ pub async fn today(
     };
 
     let sections = today_db::sections_for_today(&mut tx, user_id.0, local_date).await?;
+    let lapsed_days = lapsed_days_for_user(&mut tx, user_id.0, local_date).await?;
     let mut response_sections = Vec::with_capacity(sections.len());
 
     for section in sections {
@@ -72,7 +73,40 @@ pub async fn today(
     Ok(HttpResponse::Ok().json(TodayResponse {
         local_date,
         sections: response_sections,
+        lapsed_days,
     }))
+}
+
+async fn lapsed_days_for_user(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    local_date: chrono::NaiveDate,
+) -> Result<Option<u32>, ApiError> {
+    let last_logged: Option<chrono::NaiveDate> = sqlx::query_scalar(
+        r#"
+        select max(d.local_date)
+        from enrollments e
+        join days d on d.enrollment_id = e.id
+        join task_instances ti on ti.day_id = d.id
+        where e.user_id = $1
+          and ti.completed_at is not null
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let Some(last_logged) = last_logged else {
+        return Ok(None);
+    };
+    let days = (local_date - last_logged).num_days();
+    if days >= 5 {
+        u32::try_from(days)
+            .map(Some)
+            .map_err(|_| ApiError::BadRequest("lapsed day count out of range".to_owned()))
+    } else {
+        Ok(None)
+    }
 }
 
 async fn user_local_today(
@@ -92,6 +126,7 @@ async fn user_local_today(
 struct TodayResponse {
     local_date: chrono::NaiveDate,
     sections: Vec<TodaySectionResponse>,
+    lapsed_days: Option<u32>,
 }
 
 #[derive(Serialize)]

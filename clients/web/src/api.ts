@@ -17,6 +17,7 @@ export type SectionKind = "Program" | "Standing";
 export type TodayResponse = {
   local_date: string;
   sections: TodaySection[];
+  lapsed_days: number | null;
 };
 
 export type TodaySection = {
@@ -131,6 +132,32 @@ export type CompletionSummary = {
   };
 };
 
+export type Day = {
+  id: string;
+  enrollment_id: string;
+  local_date: string;
+  day_index: number;
+  status: string;
+  available_points: number;
+  earned_points: number;
+  note: string | null;
+};
+
+export type Cohort = {
+  id: string;
+  program_id: string;
+  name: string | null;
+  locked_start: string | null;
+};
+
+export type CohortPresence = {
+  user_id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  streak: number;
+  logged_today: boolean;
+};
+
 export type ClientSettings = {
   apiBase: string;
   userId: string;
@@ -185,6 +212,24 @@ export class ApiClient {
     return this.request<Enrollment[]>("/v1/enrollments");
   }
 
+  patchEnrollment(id: string, body: { status?: "active" | "paused" | "completed" | "abandoned"; timezone?: string; day_boundary_hour?: number }): Promise<Enrollment> {
+    return this.request<Enrollment>(`/v1/enrollments/${id}`, {
+      method: "PATCH",
+      body
+    });
+  }
+
+  returnEnrollment(id: string, action: "resume" | "restart" | "scale_down"): Promise<Enrollment> {
+    return this.request<Enrollment>(`/v1/enrollments/${id}/return`, {
+      method: "POST",
+      body: { action }
+    });
+  }
+
+  days(enrollment: string, from: string, to: string): Promise<Day[]> {
+    return this.request<Day[]>(`/v1/days?enrollment=${enrollment}&from=${from}&to=${to}`);
+  }
+
   stats(enrollment: string, from: string, to: string): Promise<StatsResponse> {
     return this.request<StatsResponse>(`/v1/stats?enrollment=${enrollment}&from=${from}&to=${to}`);
   }
@@ -230,6 +275,32 @@ export class ApiClient {
         day_boundary_hour: dayBoundaryHour
       }
     });
+  }
+
+  createCohort(programId: string, name: string): Promise<Cohort> {
+    return this.request<Cohort>("/v1/cohorts", {
+      method: "POST",
+      body: {
+        program_id: programId,
+        name: name.trim() || null,
+        locked_start: null
+      }
+    });
+  }
+
+  createInvite(cohortId: string): Promise<{ token: string }> {
+    return this.request<{ token: string }>(`/v1/cohorts/${cohortId}/invites`, { method: "POST" });
+  }
+
+  joinCohort(token: string): Promise<{ cohort_id: string }> {
+    return this.request<{ cohort_id: string }>("/v1/cohorts/join", {
+      method: "POST",
+      body: { token }
+    });
+  }
+
+  cohortPresence(cohortId: string, localDate: string): Promise<CohortPresence[]> {
+    return this.request<CohortPresence[]>(`/v1/cohorts/${cohortId}/presence?local_date=${localDate}`);
   }
 
   async request<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
