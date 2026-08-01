@@ -143,6 +143,13 @@ begin
       ('an unknown day status',
        format($s$update days set status = 'nearly' where id = %L$s$, dy)),
 
+      -- PRD F4: one active bounded enrollment, plus the standing list.
+      ('a second active bounded enrollment',
+       format($s$insert into enrollments
+                   (id, user_id, program_id, timezone, start_date, is_standing)
+                 values (gen_random_uuid(), %L, %L, 'Africa/Lagos',
+                         '2026-08-01', false)$s$, u, pb)),
+
       ('a fourth banked freeze',
        format($s$insert into streak_states (enrollment_id, freezes)
                  values (%L, 4)$s$, eb))
@@ -187,6 +194,38 @@ begin
       format('%s standing enrollment(s) surfaced through cohort_presence_on', leaked)
     );
   end if;
+
+  -- ---- the focus constraint permits what it should ------------------------
+  -- A paused program is not competing for attention, so it must not block a
+  -- new one.
+  begin
+    insert into enrollments (id, user_id, program_id, timezone, start_date, is_standing, status)
+      values (gen_random_uuid(), u, pb, 'Africa/Lagos', '2026-08-01', false, 'paused');
+  exception when others then
+    failures := array_append(failures, 'a paused enrollment could not be created');
+  end;
+
+  -- The standing list never counts against the constraint: the fixture already
+  -- holds an active bounded *and* an active standing enrollment for this user.
+  if not exists (
+    select 1 from enrollments where user_id = u and is_standing and status = 'active'
+  ) then
+    failures := array_append(failures,
+      'the standing enrollment was blocked by the focus constraint');
+  end if;
+
+  -- And the opt-out an index could not have expressed.
+  insert into user_settings (user_id, timezone, allow_multi_active)
+    values (u, 'Africa/Lagos', true)
+  on conflict (user_id) do update set allow_multi_active = true;
+
+  begin
+    insert into enrollments (id, user_id, program_id, timezone, start_date, is_standing)
+      values (gen_random_uuid(), u, pb, 'Africa/Lagos', '2026-08-01', false);
+  exception when others then
+    failures := array_append(failures,
+      'allow_multi_active did not permit a second active bounded enrollment');
+  end;
 
   -- ---- verdict -------------------------------------------------------------
   if array_length(failures, 1) > 0 then

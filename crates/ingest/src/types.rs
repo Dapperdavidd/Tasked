@@ -4,11 +4,14 @@
 //! which is validated, calibrated in deterministic code, shown to the user for
 //! editing, and only then confirmed into `programs` and `task_templates`.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracked_core::cadence::Cadence;
+use ts_rs::TS;
 
 /// How much of the user's day the program is allowed to claim, per PRD F1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 #[serde(rename_all = "snake_case")]
 pub enum Intensity {
     Light,
@@ -37,7 +40,8 @@ impl Intensity {
 }
 
 /// The three shapes a source can take, per PRD F1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 #[serde(rename_all = "snake_case")]
 pub enum ProgramKind {
     /// Sequential: task X belongs to day N.
@@ -48,7 +52,8 @@ pub enum ProgramKind {
     Project,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 pub struct GeneratedTask {
     /// Imperative, starts with a verb, 80 characters or fewer.
     pub title: String,
@@ -76,7 +81,8 @@ impl GeneratedTask {
 
 // No `Eq`: `confidence` is a float, and an equality that silently compares
 // floats is worse than not having one.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 pub struct GeneratedProgram {
     pub title: String,
     pub summary: String,
@@ -92,7 +98,8 @@ pub struct GeneratedProgram {
 /// Warnings carry a **task index, never a task title**. They travel through
 /// logs, metrics, and error reporting, and task content is never allowed in any
 /// of those. The client resolves the index against the draft it already holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Warning {
     /// A day is still over the tolerated ceiling after every remedy was tried.
@@ -123,7 +130,8 @@ pub enum Warning {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 #[serde(rename_all = "snake_case")]
 pub enum ClampedField {
     Difficulty,

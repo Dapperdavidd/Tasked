@@ -5,6 +5,7 @@ pub mod days;
 pub mod devices;
 pub mod enrollments;
 pub mod health;
+pub mod ingest;
 pub mod programs;
 pub mod rest_days;
 pub mod standing;
@@ -15,6 +16,8 @@ pub mod today;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(health::health)
+        .service(ingest::create_ingest)
+        .service(ingest::get_ingest)
         .service(programs::create_program)
         .service(sync::sync)
         .service(today::today)

@@ -16,4 +16,5 @@ thiserror.workspace = true
 tokio.workspace = true
 tracked-core.workspace = true
 tracked-db.workspace = true
+tracked-ingest.workspace = true
 uuid.workspace = true

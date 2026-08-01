@@ -1,5 +1,7 @@
 use chrono::{Datelike, NaiveDate};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// When a task template fires.
 ///
@@ -14,13 +16,14 @@ use serde::{Deserialize, Serialize};
 /// { "type": "n_per_week", "count": 3 }
 /// { "type": "once", "day_offset": 12 }
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 // `deny_unknown_fields` is deliberately absent: serde does not support it on
 // internally tagged enums, so adding it would imply a guarantee that silently
 // does not hold. Unknown *types* are still rejected, which is the case that
 // matters — an unrecognised cadence reaching the materialiser means a user's
 // day quietly has no tasks in it.
 #[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export, export_to = "../../../clients/shared/src/types/")]
 pub enum Cadence {
     Daily,
     WeeklyDays { days: Vec<u8> },

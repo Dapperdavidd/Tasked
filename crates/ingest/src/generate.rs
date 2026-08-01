@@ -52,6 +52,22 @@ pub struct Validated {
     pub warnings: Vec<Warning>,
 }
 
+/// The JSON schema for a stage-3 response, derived from the Rust type.
+///
+/// Sent to the model so the shape is constrained at generation time rather than
+/// argued with afterwards. It is derived rather than hand written for the same
+/// reason the client's TypeScript types are: a hand-written copy drifts from the
+/// struct it describes, and the drift shows up as a parse failure in production
+/// rather than a compile error here.
+///
+/// Note the division of labour. The schema constrains *shape*; `serde` enforces
+/// it on the way in; [`validate`] enforces everything a schema cannot express —
+/// that difficulty is 1 to 5, that a `once` task lands inside the program.
+pub fn response_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(GeneratedProgram))
+        .unwrap_or_else(|_| serde_json::json!({}))
+}
+
 /// Parse raw model output into a generated program.
 pub fn parse(raw: &str) -> Result<GeneratedProgram, GenerateError> {
     serde_json::from_str(strip_code_fence(raw))
@@ -337,6 +353,42 @@ mod tests {
         let parsed = parse(raw).expect("parses");
         assert_eq!(parsed.tasks.len(), 1);
         assert_eq!(parsed.tasks[0].cadence, Cadence::Daily);
+    }
+
+    // --- schema -------------------------------------------------------------
+
+    #[test]
+    fn the_response_schema_describes_the_type_it_is_derived_from() {
+        let schema = response_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(|value| value.as_object())
+            .expect("schema has properties");
+
+        for field in [
+            "title",
+            "summary",
+            "kind",
+            "duration_days",
+            "confidence",
+            "tasks",
+            "warnings",
+        ] {
+            assert!(properties.contains_key(field), "schema is missing {field}");
+        }
+    }
+
+    /// The schema and the parser must agree, or the model is asked for one
+    /// shape and rejected for producing it.
+    #[test]
+    fn every_cadence_variant_reaches_the_schema() {
+        let schema = response_schema().to_string();
+        for cadence in ["daily", "weekly_days", "n_per_week", "once"] {
+            assert!(
+                schema.contains(cadence),
+                "schema does not offer the {cadence} cadence"
+            );
+        }
     }
 
     // --- reduce -------------------------------------------------------------
