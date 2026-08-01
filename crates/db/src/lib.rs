@@ -8,6 +8,7 @@ pub mod finalise;
 pub mod idempotency;
 pub mod jobs;
 pub mod materialise;
+pub mod notifications;
 pub mod pool;
 pub mod rest_days;
 pub mod rls;

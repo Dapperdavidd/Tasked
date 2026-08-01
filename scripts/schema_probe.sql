@@ -40,6 +40,8 @@ declare
   dy constant uuid := '11111111-1111-4111-8111-000000000006';  -- a day
   tt constant uuid := '11111111-1111-4111-8111-000000000007';  -- a task template
   ch constant uuid := '11111111-1111-4111-8111-000000000008';  -- a cohort
+  dv constant uuid := '11111111-1111-4111-8111-000000000009';  -- a device
+  ne constant uuid := '11111111-1111-4111-8111-000000000010';  -- notification event
 begin
   -- ---- fixtures ------------------------------------------------------------
   insert into users (id, email) values (u, 'probe@example.invalid');
@@ -64,6 +66,13 @@ begin
 
   insert into task_instances (id, day_id, template_id, title, points, position)
     values (gen_random_uuid(), dy, tt, 'probe task', 10, 0);
+
+  insert into devices (id, user_id, push_provider, push_token, platform, enabled)
+    values (dv, u, 'expo', 'ExponentPushToken[probe]', 'ios', true);
+
+  insert into notification_events
+    (id, user_id, kind, scheduled_at, title, body, status)
+    values (ne, u, 'morning_card', '2026-08-01T07:30:00Z', 'Today', 'Probe', 'queued');
 
   -- Fill the standing list exactly to its cap of five.
   insert into task_templates
@@ -152,7 +161,18 @@ begin
 
       ('a fourth banked freeze',
        format($s$insert into streak_states (enrollment_id, freezes)
-                 values (%L, 4)$s$, eb))
+                 values (%L, 4)$s$, eb)),
+
+      ('an unknown notification kind',
+       format($s$insert into notification_events
+                   (id, user_id, kind, scheduled_at, title, body)
+                 values (gen_random_uuid(), %L, 'nag_forever',
+                         '2026-08-01T07:30:00Z', 'x', 'x')$s$, u)),
+
+      ('an unknown notification delivery status',
+       format($s$insert into notification_deliveries
+                   (id, event_id, user_id, device_id, push_provider, push_token, status)
+                 values (gen_random_uuid(), %L, %L, %L, 'expo', 'x', 'maybe')$s$, ne, u, dv))
     ) as t(label, stmt)
   loop
     accepted := false;

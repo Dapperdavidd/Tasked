@@ -46,6 +46,15 @@ async fn run() -> Result<(), String> {
                 .map_err(|error| format!("ingest failed: {error}"))?;
             println!("processed {count} ingest job(s)");
         }
+        "notify" => {
+            let enqueued = tracked_worker::notify::enqueue_due(&pool, chrono::Utc::now())
+                .await
+                .map_err(|error| format!("notification enqueue failed: {error}"))?;
+            let delivered = tracked_worker::notify::deliver_queued(&pool, 500)
+                .await
+                .map_err(|error| format!("notification delivery failed: {error}"))?;
+            println!("enqueued {enqueued} notification event(s), delivered {delivered} device notification(s)");
+        }
         "run-once" => {
             let materialised =
                 tracked_worker::materialise::materialise_due(&pool, chrono::Utc::now())
@@ -60,12 +69,20 @@ async fn run() -> Result<(), String> {
             let ingested = tracked_worker::ingest::process_due(&pool, 100)
                 .await
                 .map_err(|error| format!("ingest failed: {error}"))?;
+            let enqueued = tracked_worker::notify::enqueue_due(&pool, chrono::Utc::now())
+                .await
+                .map_err(|error| format!("notification enqueue failed: {error}"))?;
+            let delivered = tracked_worker::notify::deliver_queued(&pool, 500)
+                .await
+                .map_err(|error| format!("notification delivery failed: {error}"))?;
             println!(
-                "materialised {materialised} day(s), finalised {finalised} day(s), expired {expired} repair window(s), processed {ingested} ingest job(s)"
+                "materialised {materialised} day(s), finalised {finalised} day(s), expired {expired} repair window(s), processed {ingested} ingest job(s), enqueued {enqueued} notification event(s), delivered {delivered} device notification(s)"
             );
         }
         _ => {
-            return Err("usage: tracked-worker [materialise|finalise|ingest|run-once]".to_owned());
+            return Err(
+                "usage: tracked-worker [materialise|finalise|ingest|notify|run-once]".to_owned(),
+            );
         }
     }
 

@@ -6,6 +6,7 @@ pub mod devices;
 pub mod enrollments;
 pub mod health;
 pub mod ingest;
+pub mod notifications;
 pub mod programs;
 pub mod rest_days;
 pub mod standing;
@@ -32,6 +33,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(rest_days::delete_rest_day)
         .service(devices::register_device)
         .service(devices::disable_device)
+        .service(notifications::enqueue_test_notification)
+        .service(notifications::list_notifications)
         .service(stats::stats)
         .service(cohorts::create_cohort)
         .service(cohorts::create_invite)
@@ -41,5 +44,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(days::patch_day)
         .service(days::repair_day)
         .service(enrollments::list_enrollments)
+        .service(enrollments::enrollment_summary)
         .service(enrollments::patch_enrollment);
 }

@@ -203,6 +203,36 @@ pub struct DeviceRow {
 }
 
 #[derive(Clone, Debug, FromRow)]
+pub struct NotificationEventRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub kind: String,
+    pub scheduled_at: DateTime<Utc>,
+    pub title: String,
+    pub body: String,
+    pub payload: Value,
+    pub status: String,
+    pub skipped_reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub sent_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct NotificationDeliveryRow {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub user_id: Uuid,
+    pub device_id: Uuid,
+    pub push_provider: PushProvider,
+    pub push_token: String,
+    pub status: String,
+    pub attempted_at: Option<DateTime<Utc>>,
+    pub delivered_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow)]
 pub struct CompletionArtifactRow {
     pub id: Uuid,
     pub enrollment_id: Uuid,
