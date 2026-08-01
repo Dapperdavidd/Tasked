@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactElement } from "react";
 import {
   ApiClient,
+  clearSessionSettings,
   dayScore,
   defaultSettings,
   saveSettings,
@@ -60,8 +61,38 @@ export function App(): ReactElement {
   const showReturn = state.today?.lapsed_days !== null && state.today?.lapsed_days !== undefined && returnDismissedFor !== state.today.local_date;
 
   useEffect(() => {
-    void refreshPrimary();
+    void boot();
   }, []);
+
+  async function boot(): Promise<void> {
+    if (state.settings.userId.trim()) {
+      await run("Loaded today", async () => {
+        try {
+          return await loadPrimary(client);
+        } catch {
+          clearSessionSettings();
+          const fallbackSettings = { apiBase: "", userId: "" };
+          const fallbackClient = new ApiClient(fallbackSettings);
+          const session = await fallbackClient.createSession();
+          const nextSettings = { apiBase: "", userId: session.user_id };
+          saveSettings(nextSettings);
+          const nextClient = new ApiClient(nextSettings);
+          const patch = await loadPrimary(nextClient);
+          return { ...patch, settings: nextSettings };
+        }
+      });
+      return;
+    }
+
+    await run("Session ready", async () => {
+      const session = await client.createSession();
+      const nextSettings = { ...state.settings, userId: session.user_id };
+      saveSettings(nextSettings);
+      const nextClient = new ApiClient(nextSettings);
+      const patch = await loadPrimary(nextClient);
+      return { ...patch, settings: nextSettings };
+    });
+  }
 
   async function run(success: string, work: () => Promise<Partial<AppState> | void>): Promise<void> {
     setState((current) => ({ ...current, error: null, status: "Working..." }));
@@ -79,20 +110,24 @@ export function App(): ReactElement {
 
   async function refreshPrimary(): Promise<void> {
     if (!state.settings.userId.trim()) {
-      setState((current) => ({ ...current, status: "Set API details to load data" }));
+      await boot();
       return;
     }
     await run("Loaded today", async () => {
-      const [today, enrollments, notifications] = await Promise.all([
-        client.today(),
-        client.enrollments(),
-        client.notifications().catch(() => [])
-      ]);
-      const active = today.sections.find((section) => section.kind === "Program") ?? null;
-      const enrollment = active ? enrollments.find((item) => item.id === active.enrollment_id) ?? null : null;
-      const cohortPresence = enrollment?.cohort_id ? await client.cohortPresence(enrollment.cohort_id, today.local_date).catch(() => []) : [];
-      return { today, enrollments, notifications, cohortPresence };
+      return loadPrimary(client);
     });
+  }
+
+  async function loadPrimary(loadClient: ApiClient): Promise<Partial<AppState>> {
+    const [today, enrollments, notifications] = await Promise.all([
+      loadClient.today(),
+      loadClient.enrollments(),
+      loadClient.notifications().catch(() => [])
+    ]);
+    const active = today.sections.find((section) => section.kind === "Program") ?? null;
+    const enrollment = active ? enrollments.find((item) => item.id === active.enrollment_id) ?? null : null;
+    const cohortPresence = enrollment?.cohort_id ? await loadClient.cohortPresence(enrollment.cohort_id, today.local_date).catch(() => []) : [];
+    return { today, enrollments, notifications, cohortPresence };
   }
 
   async function changeView(view: View): Promise<void> {
@@ -654,10 +689,14 @@ function SettingsView(props: { settings: ClientSettings; save: (event: FormEvent
   return (
     <section className="panel narrow">
       <h2>Settings</h2>
+      <div className="empty">
+        <strong>Session is managed automatically.</strong>
+        <span>No API key or user id is required to use Tracked.</span>
+      </div>
       <form className="form" onSubmit={props.save}>
-        <label>API base<input name="apiBase" defaultValue={props.settings.apiBase} /></label>
-        <label>User ID<input name="userId" defaultValue={props.settings.userId} /></label>
-        <button className="button primary" type="submit">Save settings</button>
+        <label>Advanced API base<input name="apiBase" defaultValue={props.settings.apiBase} placeholder="Leave blank for automatic" /></label>
+        <input name="userId" type="hidden" value={props.settings.userId} readOnly />
+        <button className="button subtle" type="submit">Save advanced setting</button>
       </form>
       <div className="list">
         <button className="button subtle" type="button" onClick={props.testNotification}>Queue test notification</button>
@@ -712,8 +751,11 @@ function HeatmapGrid(props: { days: StatsResponse["days"]; fallbackSection: Toda
   }
   return (
     <>
-      <div className="heatmap full">
-        {props.days.map((day) => <span className={`cell ${statusClass(day.status, scoreFromDay(day))}`} title={`${day.local_date} · ${day.status}`} key={day.id} />)}
+      <div className="heatmap-shell">
+        <div className="heatmap-weekdays"><span>Mon</span><span>Wed</span><span>Fri</span></div>
+        <div className="heatmap full">
+          {props.days.map((day) => <span className={`cell ${statusClass(day.status, scoreFromDay(day))}`} title={`${day.local_date} · ${day.status}`} key={day.id} />)}
+        </div>
       </div>
       <div className="legend"><span>Missed</span><span>Low</span><span>Medium</span><span>High</span><span>Perfect</span></div>
     </>

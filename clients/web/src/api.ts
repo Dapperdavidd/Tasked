@@ -163,11 +163,25 @@ export type ClientSettings = {
   userId: string;
 };
 
+export type SessionResponse = {
+  user_id: string;
+  display_name: string;
+  timezone: string;
+};
+
 export class ApiClient {
   readonly settings: ClientSettings;
 
   constructor(settings: ClientSettings) {
     this.settings = settings;
+  }
+
+  createSession(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos"): Promise<SessionResponse> {
+    return this.request<SessionResponse>("/v1/sessions", {
+      method: "POST",
+      body: { timezone, display_name: "Dapper" },
+      auth: false
+    });
   }
 
   today(): Promise<TodayResponse> {
@@ -303,17 +317,21 @@ export class ApiClient {
     return this.request<CohortPresence[]>(`/v1/cohorts/${cohortId}/presence?local_date=${localDate}`);
   }
 
-  async request<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
-    if (!this.settings.userId.trim()) {
-      throw new Error("Set an API user id in Settings.");
+  async request<T>(path: string, options: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
+    const needsAuth = options.auth !== false;
+    if (needsAuth && !this.settings.userId.trim()) {
+      throw new Error("Session is not ready yet. Refresh and try again.");
+    }
+
+    const headers = new Headers();
+    headers.set("content-type", "application/json");
+    if (needsAuth) {
+      headers.set("x-user-id", this.settings.userId);
     }
 
     const init: RequestInit = {
       method: options.method ?? "GET",
-      headers: {
-        "content-type": "application/json",
-        "x-user-id": this.settings.userId
-      }
+      headers
     };
     if (options.body !== undefined) {
       init.body = JSON.stringify(options.body);
@@ -334,13 +352,31 @@ export class ApiClient {
 }
 
 export const defaultSettings: ClientSettings = {
-  apiBase: localStorage.getItem("tracked.apiBase") ?? "http://localhost:8080",
+  apiBase: storedApiBase(),
   userId: localStorage.getItem("tracked.userId") ?? ""
 };
 
 export function saveSettings(settings: ClientSettings): void {
-  localStorage.setItem("tracked.apiBase", settings.apiBase);
+  if (settings.apiBase.trim()) {
+    localStorage.setItem("tracked.apiBase", settings.apiBase);
+  } else {
+    localStorage.removeItem("tracked.apiBase");
+  }
   localStorage.setItem("tracked.userId", settings.userId);
+}
+
+export function clearSessionSettings(): void {
+  localStorage.removeItem("tracked.userId");
+  localStorage.removeItem("tracked.apiBase");
+}
+
+function storedApiBase(): string {
+  const value = localStorage.getItem("tracked.apiBase") ?? "";
+  if (value === "http://localhost:8080" || value === "http://127.0.0.1:8080") {
+    localStorage.removeItem("tracked.apiBase");
+    return "";
+  }
+  return value;
 }
 
 function isErrorPayload(value: unknown): value is { error: string } {

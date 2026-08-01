@@ -9,6 +9,7 @@ pub mod ingest;
 pub mod notifications;
 pub mod programs;
 pub mod rest_days;
+pub mod sessions;
 pub mod standing;
 pub mod stats;
 pub mod sync;
@@ -17,6 +18,7 @@ pub mod today;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(health::health)
+        .service(sessions::create_session)
         .service(ingest::create_ingest)
         .service(ingest::get_ingest)
         .service(ingest::ingest_events)
