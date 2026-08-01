@@ -1,4 +1,6 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use serde::Deserialize;
+use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
@@ -137,6 +139,166 @@ pub async fn oldest_unfinalised_day_for_enrollment(
     .await
 }
 
+pub async fn day_for_update(
+    tx: &mut Transaction<'_, Postgres>,
+    day_id: Uuid,
+) -> Result<DayRow, sqlx::Error> {
+    sqlx::query_as::<_, DayRow>(
+        r#"
+        select id, enrollment_id, local_date, day_index, status, available_points,
+               earned_points, note, opens_at, closes_at, finalised_at
+        from days
+        where id = $1
+        for update
+        "#,
+    )
+    .bind(day_id)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+pub async fn complete_remaining_day_tasks(
+    tx: &mut Transaction<'_, Postgres>,
+    day_id: Uuid,
+    completed_at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        update task_instances
+        set completed_at = coalesce(completed_at, $2),
+            skipped_reason = null
+        where day_id = $1
+          and not is_floating
+        "#,
+    )
+    .bind(day_id)
+    .bind(completed_at)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn refresh_repaired_day(
+    tx: &mut Transaction<'_, Postgres>,
+    day_id: Uuid,
+) -> Result<DayRow, sqlx::Error> {
+    sqlx::query_as::<_, DayRow>(
+        r#"
+        update days
+        set status = 'complete',
+            available_points = coalesce((
+              select sum(points)::int
+              from task_instances
+              where day_id = $1
+                and not is_floating
+                and skipped_reason is null
+            ), 0),
+            earned_points = coalesce((
+              select sum(points)::int
+              from task_instances
+              where day_id = $1
+                and completed_at is not null
+                and skipped_reason is null
+            ), 0)
+        where id = $1
+        returning id, enrollment_id, local_date, day_index, status, available_points,
+                  earned_points, note, opens_at, closes_at, finalised_at
+        "#,
+    )
+    .bind(day_id)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+pub async fn finalised_days_for_replay(
+    tx: &mut Transaction<'_, Postgres>,
+    enrollment_id: Uuid,
+) -> Result<Vec<DayRow>, sqlx::Error> {
+    sqlx::query_as::<_, DayRow>(
+        r#"
+        select id, enrollment_id, local_date, day_index, status, available_points,
+               earned_points, note, opens_at, closes_at, finalised_at
+        from days
+        where enrollment_id = $1
+          and finalised_at is not null
+        order by local_date
+        "#,
+    )
+    .bind(enrollment_id)
+    .fetch_all(&mut **tx)
+    .await
+}
+
+pub async fn mark_repair_used(
+    tx: &mut Transaction<'_, Postgres>,
+    enrollment_id: Uuid,
+    local_date: NaiveDate,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        update streak_states
+        set repair_used_month = $2
+        where enrollment_id = $1
+        "#,
+    )
+    .bind(enrollment_id)
+    .bind(local_date)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn claim_next_job_kind(
+    tx: &mut Transaction<'_, Postgres>,
+    kind: &str,
+    lock_for: Duration,
+) -> Result<Option<JobWorkRow>, sqlx::Error> {
+    sqlx::query_as::<_, JobWorkRow>(
+        r#"
+        update jobs
+        set locked_until = now() + ($2::bigint * interval '1 second'),
+            attempts = attempts + 1
+        where id = (
+          select id
+          from jobs
+          where failed_at is null
+            and kind = $1
+            and run_at <= now()
+            and attempts < max_attempts
+            and (locked_until is null or locked_until < now())
+          order by run_at
+          for update skip locked
+          limit 1
+        )
+        returning id, kind, payload, attempts, max_attempts
+        "#,
+    )
+    .bind(kind)
+    .bind(lock_for.num_seconds())
+    .fetch_optional(&mut **tx)
+    .await
+}
+
+pub async fn complete_job(
+    tx: &mut Transaction<'_, Postgres>,
+    job_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("delete from jobs where id = $1")
+        .bind(job_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+pub fn job_payload_as<T>(job: &JobWorkRow) -> Result<T, serde_json::Error>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    serde_json::from_value(job.payload.clone())
+}
+
 #[derive(Clone, Debug)]
 pub struct NewStreakState {
     pub enrollment_id: Uuid,
@@ -147,6 +309,15 @@ pub struct NewStreakState {
     pub last_counted_date: Option<NaiveDate>,
     pub repair_used_month: Option<NaiveDate>,
     pub state: StreakState,
+}
+
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct JobWorkRow {
+    pub id: Uuid,
+    pub kind: String,
+    pub payload: Value,
+    pub attempts: i32,
+    pub max_attempts: i32,
 }
 
 fn advisory_lock_key(enrollment_id: Uuid) -> i64 {

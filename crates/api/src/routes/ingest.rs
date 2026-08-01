@@ -2,6 +2,7 @@ use actix_web::{get, post, web, HttpResponse};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tracked_db::jobs::{self, JobRetryPolicy};
 use tracked_ingest::{
     calibrate, normalise, validate, Extracted, GeneratedProgram, Intensity, NormaliseError,
     SourceKind, Warning,
@@ -37,6 +38,12 @@ struct IngestStatusResponse {
     warnings: Vec<Warning>,
     error_code: Option<String>,
     created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct IngestEventEnvelope {
+    event: &'static str,
+    payload: IngestStatusResponse,
 }
 
 #[derive(FromRow)]
@@ -168,6 +175,17 @@ pub async fn create_ingest(
     .execute(&mut *tx)
     .await?;
 
+    if status == "queued" {
+        jobs::enqueue_job(
+            &mut tx,
+            "ingest_process",
+            serde_json::json!({ "ingestion_job_id": job_id }),
+            Utc::now(),
+            JobRetryPolicy::default(),
+        )
+        .await?;
+    }
+
     tx.commit().await?;
 
     Ok(HttpResponse::Ok().json(CreateIngestResponse {
@@ -177,40 +195,34 @@ pub async fn create_ingest(
     }))
 }
 
+#[get("/v1/ingest/{id}/events")]
+pub async fn ingest_events(
+    state: web::Data<ApiState>,
+    user_id: UserId,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, ApiError> {
+    let payload = fetch_ingest_status(&state, user_id.0, path.into_inner()).await?;
+    let body = format!(
+        "retry: 1000\nevent: progress\ndata: {}\n\n",
+        serde_json::to_string(&IngestEventEnvelope {
+            event: "progress",
+            payload,
+        })
+        .map_err(|_| ApiError::BadRequest("invalid ingest event".to_owned()))?
+    );
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/event-stream")
+        .body(body))
+}
+
 #[get("/v1/ingest/{id}")]
 pub async fn get_ingest(
     state: web::Data<ApiState>,
     user_id: UserId,
     path: web::Path<Uuid>,
 ) -> Result<HttpResponse, ApiError> {
-    let mut tx = state.pool.begin().await?;
-    tracked_db::rls::set_request_user(&mut tx, user_id.0).await?;
-
-    let row = sqlx::query_as::<_, IngestRow>(
-        r#"
-        select id, source_id, intensity, status, instruction, draft, warnings, error_code, created_at
-        from ingestion_jobs
-        where id = $1
-        "#,
-    )
-    .bind(path.into_inner())
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| ApiError::BadRequest("ingest job not found".to_owned()))?;
-
-    tx.commit().await?;
-
-    Ok(HttpResponse::Ok().json(IngestStatusResponse {
-        job_id: row.id,
-        source_id: row.source_id,
-        intensity: intensity_from_db(&row.intensity)?,
-        status: row.status,
-        instruction: row.instruction,
-        draft: decode_optional_json(row.draft)?,
-        warnings: decode_warnings(row.warnings)?,
-        error_code: row.error_code,
-        created_at: row.created_at,
-    }))
+    Ok(HttpResponse::Ok().json(fetch_ingest_status(&state, user_id.0, path.into_inner()).await?))
 }
 
 fn ready_draft(
@@ -263,6 +275,41 @@ fn decode_optional_json<T: serde::de::DeserializeOwned>(
 
 fn decode_warnings(value: Option<serde_json::Value>) -> Result<Vec<Warning>, ApiError> {
     decode_optional_json(value).map(|warnings| warnings.unwrap_or_default())
+}
+
+async fn fetch_ingest_status(
+    state: &web::Data<ApiState>,
+    user_id: Uuid,
+    ingest_job_id: Uuid,
+) -> Result<IngestStatusResponse, ApiError> {
+    let mut tx = state.pool.begin().await?;
+    tracked_db::rls::set_request_user(&mut tx, user_id).await?;
+
+    let row = sqlx::query_as::<_, IngestRow>(
+        r#"
+        select id, source_id, intensity, status, instruction, draft, warnings, error_code, created_at
+        from ingestion_jobs
+        where id = $1
+        "#,
+    )
+    .bind(ingest_job_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| ApiError::BadRequest("ingest job not found".to_owned()))?;
+
+    tx.commit().await?;
+
+    Ok(IngestStatusResponse {
+        job_id: row.id,
+        source_id: row.source_id,
+        intensity: intensity_from_db(&row.intensity)?,
+        status: row.status,
+        instruction: row.instruction,
+        draft: decode_optional_json(row.draft)?,
+        warnings: decode_warnings(row.warnings)?,
+        error_code: row.error_code,
+        created_at: row.created_at,
+    })
 }
 
 fn map_normalise_error(error: NormaliseError) -> ApiError {

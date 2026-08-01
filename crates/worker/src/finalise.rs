@@ -1,5 +1,5 @@
 use chrono::{Datelike, Duration, NaiveDate, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracked_core::{
     scoring::{self, DayStatus as CoreDayStatus},
@@ -31,6 +31,56 @@ pub async fn finalise_due(pool: &PgPool, max_days: u32) -> Result<u32, FinaliseE
     }
 
     Ok(finalised)
+}
+
+pub async fn expire_repairable_due(pool: &PgPool, max_jobs: u32) -> Result<u32, FinaliseError> {
+    let mut expired = 0_u32;
+
+    for _ in 0..max_jobs {
+        if !expire_one_repairable(pool).await? {
+            break;
+        }
+        expired += 1;
+    }
+
+    Ok(expired)
+}
+
+async fn expire_one_repairable(pool: &PgPool) -> Result<bool, FinaliseError> {
+    let mut tx = pool.begin().await?;
+    let Some(job) =
+        db_finalise::claim_next_job_kind(&mut tx, "break_repairable", Duration::minutes(5)).await?
+    else {
+        tx.commit().await?;
+        return Ok(false);
+    };
+
+    let payload: BreakRepairablePayload =
+        db_finalise::job_payload_as(&job).map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
+
+    db_finalise::lock_enrollment(&mut tx, payload.enrollment_id).await?;
+    let day = db_finalise::day_for_update(&mut tx, payload.day_id).await?;
+
+    if day.status == DayStatus::Missed {
+        db_finalise::update_streak_state(
+            &mut tx,
+            db_finalise::NewStreakState {
+                enrollment_id: payload.enrollment_id,
+                current: payload.current,
+                longest: payload.longest,
+                freezes: payload.freezes,
+                clean_run: payload.clean_run,
+                last_counted_date: Some(payload.last_counted_date),
+                repair_used_month: payload.repair_used_month,
+                state: payload.state,
+            },
+        )
+        .await?;
+    }
+
+    db_finalise::complete_job(&mut tx, job.id).await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 pub async fn finalise_one(pool: &PgPool) -> Result<bool, FinaliseError> {
@@ -114,6 +164,7 @@ pub async fn finalise_one(pool: &PgPool) -> Result<bool, FinaliseError> {
                 clean_run: u8_to_i16(on_expiry.streak.clean_run),
                 state: db_streak_state(on_expiry.streak.state),
                 last_counted_date: day.local_date,
+                repair_used_month: streak_row.repair_used_month,
             };
             jobs::enqueue_job(
                 &mut tx,
@@ -242,7 +293,7 @@ fn u8_to_i16(value: u8) -> i16 {
     i16::from(value)
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct BreakRepairablePayload {
     enrollment_id: Uuid,
     day_id: Uuid,
@@ -252,6 +303,7 @@ struct BreakRepairablePayload {
     clean_run: i16,
     state: StreakState,
     last_counted_date: NaiveDate,
+    repair_used_month: Option<NaiveDate>,
 }
 
 #[cfg(test)]

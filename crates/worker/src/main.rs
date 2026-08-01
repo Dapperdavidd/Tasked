@@ -35,7 +35,16 @@ async fn run() -> Result<(), String> {
             let count = tracked_worker::finalise::finalise_due(&pool, 500)
                 .await
                 .map_err(|error| format!("finalise failed: {error}"))?;
-            println!("finalised {count} day(s)");
+            let expired = tracked_worker::finalise::expire_repairable_due(&pool, 500)
+                .await
+                .map_err(|error| format!("repair expiry failed: {error}"))?;
+            println!("finalised {count} day(s), expired {expired} repair window(s)");
+        }
+        "ingest" => {
+            let count = tracked_worker::ingest::process_due(&pool, 100)
+                .await
+                .map_err(|error| format!("ingest failed: {error}"))?;
+            println!("processed {count} ingest job(s)");
         }
         "run-once" => {
             let materialised =
@@ -45,10 +54,18 @@ async fn run() -> Result<(), String> {
             let finalised = tracked_worker::finalise::finalise_due(&pool, 500)
                 .await
                 .map_err(|error| format!("finalise failed: {error}"))?;
-            println!("materialised {materialised} day(s), finalised {finalised} day(s)");
+            let expired = tracked_worker::finalise::expire_repairable_due(&pool, 500)
+                .await
+                .map_err(|error| format!("repair expiry failed: {error}"))?;
+            let ingested = tracked_worker::ingest::process_due(&pool, 100)
+                .await
+                .map_err(|error| format!("ingest failed: {error}"))?;
+            println!(
+                "materialised {materialised} day(s), finalised {finalised} day(s), expired {expired} repair window(s), processed {ingested} ingest job(s)"
+            );
         }
         _ => {
-            return Err("usage: tracked-worker [materialise|finalise|run-once]".to_owned());
+            return Err("usage: tracked-worker [materialise|finalise|ingest|run-once]".to_owned());
         }
     }
 

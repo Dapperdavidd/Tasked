@@ -18,6 +18,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(health::health)
         .service(ingest::create_ingest)
         .service(ingest::get_ingest)
+        .service(ingest::ingest_events)
         .service(programs::create_program)
         .service(sync::sync)
         .service(today::today)
@@ -38,6 +39,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(cohorts::presence)
         .service(days::get_days)
         .service(days::patch_day)
+        .service(days::repair_day)
         .service(enrollments::list_enrollments)
         .service(enrollments::patch_enrollment);
 }
