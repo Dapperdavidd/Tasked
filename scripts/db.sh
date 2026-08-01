@@ -6,6 +6,7 @@
 #   scripts/db.sh migrate   apply pending migrations
 #   scripts/db.sh check     assert the schema matches what the migrations say
 #   scripts/db.sh probe     assert every schema guarantee actually rejects a violation
+#   scripts/db.sh scenario  walk a floating task through a real ISO week
 #   scripts/db.sh seed      load fixtures/seed_phase2.sql
 #   scripts/db.sh reset     drop and recreate; refuses unless TRACKED_ALLOW_RESET=1
 #   scripts/db.sh psql      open a shell on the dev database
@@ -93,6 +94,12 @@ cmd_probe() {
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/schema_probe.sql
 }
 
+# Walks a floating task through a real ISO week against a real database.
+cmd_scenario() {
+  ensure_server
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/floating_task_scenario.sql
+}
+
 cmd_seed() {
   ensure_server
   local fixture=fixtures/seed_phase2.sql
@@ -122,6 +129,7 @@ case "${1:-}" in
   migrate) cmd_migrate ;;
   check)   cmd_check ;;
   probe)   cmd_probe ;;
+  scenario) cmd_scenario ;;
   seed)    cmd_seed ;;
   reset)   cmd_reset ;;
   psql)    cmd_psql ;;

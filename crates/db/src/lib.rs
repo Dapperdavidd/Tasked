@@ -16,3 +16,4 @@ pub mod standing;
 pub mod stats;
 pub mod tasks;
 pub mod today;
+pub mod week_buckets;
