@@ -1,2 +1,4 @@
 /target/
 .env
+clients/web/dist/
+clients/web/node_modules/
