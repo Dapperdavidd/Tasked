@@ -61,6 +61,17 @@ pub async fn process_due(pool: &PgPool, max_jobs: u32) -> Result<u32, IngestErro
     Ok(processed)
 }
 
+pub async fn process_ingestion_job(
+    pool: &PgPool,
+    ingestion_job_id: Uuid,
+) -> Result<bool, IngestError> {
+    let Some(job) = claim_ingest_job(pool, ingestion_job_id).await? else {
+        return Ok(false);
+    };
+    process_one(pool, job).await?;
+    Ok(true)
+}
+
 async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> {
     let payload: IngestPayload = serde_json::from_value(job.payload.clone())?;
     let mut tx = pool.begin().await?;
@@ -200,6 +211,36 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
     tx.commit().await?;
 
     Ok(())
+}
+
+async fn claim_ingest_job(
+    pool: &PgPool,
+    ingestion_job_id: Uuid,
+) -> Result<Option<ClaimedJob>, sqlx::Error> {
+    sqlx::query_as::<_, ClaimedJob>(
+        r#"
+        update jobs
+        set locked_until = now() + interval '5 minutes',
+            attempts = attempts + 1
+        where id = (
+          select id
+          from jobs
+          where failed_at is null
+            and kind = $1
+            and payload->>'ingestion_job_id' = $2
+            and attempts < max_attempts
+            and (locked_until is null or locked_until < now())
+          order by run_at
+          for update skip locked
+          limit 1
+        )
+        returning id, attempts, max_attempts, payload
+        "#,
+    )
+    .bind(INGEST_JOB_KIND)
+    .bind(ingestion_job_id.to_string())
+    .fetch_optional(pool)
+    .await
 }
 
 async fn claim_next_ingest_job(pool: &PgPool) -> Result<Option<ClaimedJob>, sqlx::Error> {
@@ -459,13 +500,10 @@ fn fallback_title(text: &str) -> String {
 }
 
 fn compact_title(value: &str) -> String {
-    let cleaned = value
+    let cleaned = strip_list_marker(value)
         .trim()
         .trim_start_matches(|character: char| {
-            matches!(
-                character,
-                '-' | '*' | '•' | '[' | ']' | '(' | ')' | '.' | '0'..='9'
-            )
+            matches!(character, '-' | '*' | '•' | '[' | ']' | '(' | ')')
         })
         .trim();
     let mut title = cleaned
@@ -481,6 +519,24 @@ fn compact_title(value: &str) -> String {
         "Untitled task".to_owned()
     } else {
         title
+    }
+}
+
+fn strip_list_marker(value: &str) -> &str {
+    let trimmed = value.trim_start();
+    let marker_len = trimmed
+        .char_indices()
+        .take_while(|(_, character)| character.is_ascii_digit())
+        .last()
+        .map(|(index, character)| index + character.len_utf8());
+    let Some(marker_len) = marker_len else {
+        return trimmed;
+    };
+    let rest = &trimmed[marker_len..];
+    if let Some(stripped) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')')) {
+        stripped.trim_start()
+    } else {
+        trimmed
     }
 }
 
@@ -755,5 +811,11 @@ mod tests {
     fn generation_uses_bullets_when_present() {
         let tasks = extract_task_lines("- Run 30 min\n- Stretch\nNotes");
         assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn compact_title_keeps_meaningful_leading_numbers() {
+        assert_eq!(compact_title("5K training plan"), "5K training plan");
+        assert_eq!(compact_title("1. Write brief"), "Write brief");
     }
 }

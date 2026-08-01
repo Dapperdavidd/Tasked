@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent, ReactElement } from "react";
+import type { ChangeEvent, FormEvent, ReactElement } from "react";
 import {
   ApiClient,
   clearSessionSettings,
@@ -21,6 +21,8 @@ import {
 import type { Cadence } from "../../shared/src/types/Cadence";
 import type { Intensity } from "../../shared/src/types/Intensity";
 
+type Theme = "dark" | "light";
+
 type AppState = {
   view: View;
   settings: ClientSettings;
@@ -33,7 +35,7 @@ type AppState = {
   notifications: NotificationEvent[];
   ingest: IngestJob | null;
   status: string;
-  error: string | null;
+  error: { view: View; message: string } | null;
 };
 
 const initialState: AppState = {
@@ -53,6 +55,8 @@ const initialState: AppState = {
 
 export function App(): ReactElement {
   const [state, setState] = useState<AppState>(initialState);
+  const [profileName, setProfileName] = useState(storedProfileName);
+  const [theme, setTheme] = useState<Theme>(storedTheme);
   const client = useMemo(() => new ApiClient(state.settings), [state.settings]);
   const program = state.today?.sections.find((section) => section.kind === "Program") ?? null;
   const standing = state.today?.sections.find((section) => section.kind === "Standing") ?? null;
@@ -64,6 +68,11 @@ export function App(): ReactElement {
     void boot();
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("tracked.theme", theme);
+  }, [theme]);
+
   async function boot(): Promise<void> {
     if (state.settings.userId.trim()) {
       await run("Loaded today", async () => {
@@ -73,9 +82,11 @@ export function App(): ReactElement {
           clearSessionSettings();
           const fallbackSettings = { apiBase: "", userId: "" };
           const fallbackClient = new ApiClient(fallbackSettings);
-          const session = await fallbackClient.createSession();
+          const session = await fallbackClient.createSession(undefined, profileName);
           const nextSettings = { apiBase: "", userId: session.user_id };
           saveSettings(nextSettings);
+          saveProfileName(session.display_name);
+          setProfileName(session.display_name);
           const nextClient = new ApiClient(nextSettings);
           const patch = await loadPrimary(nextClient);
           return { ...patch, settings: nextSettings };
@@ -85,9 +96,11 @@ export function App(): ReactElement {
     }
 
     await run("Session ready", async () => {
-      const session = await client.createSession();
+      const session = await client.createSession(undefined, profileName);
       const nextSettings = { ...state.settings, userId: session.user_id };
       saveSettings(nextSettings);
+      saveProfileName(session.display_name);
+      setProfileName(session.display_name);
       const nextClient = new ApiClient(nextSettings);
       const patch = await loadPrimary(nextClient);
       return { ...patch, settings: nextSettings };
@@ -95,6 +108,7 @@ export function App(): ReactElement {
   }
 
   async function run(success: string, work: () => Promise<Partial<AppState> | void>): Promise<void> {
+    const view = state.view;
     setState((current) => ({ ...current, error: null, status: "Working..." }));
     try {
       const patch = await work();
@@ -102,10 +116,15 @@ export function App(): ReactElement {
     } catch (error) {
       setState((current) => ({
         ...current,
-        error: error instanceof Error ? error.message : "Unexpected error",
+        error: { view, message: error instanceof Error ? error.message : "Unexpected error" },
         status: "Needs attention"
       }));
     }
+  }
+
+  function setPageError(message: string): void {
+    const view = state.view;
+    setState((current) => ({ ...current, error: { view, message }, status: "Needs attention" }));
   }
 
   async function refreshPrimary(): Promise<void> {
@@ -131,7 +150,7 @@ export function App(): ReactElement {
   }
 
   async function changeView(view: View): Promise<void> {
-    setState((current) => ({ ...current, view }));
+    setState((current) => ({ ...current, view, error: null }));
     if (view === "heatmap" && state.stats === null && program) {
       await loadStats(program);
     }
@@ -187,7 +206,7 @@ export function App(): ReactElement {
   async function confirmDraft(): Promise<void> {
     const job = state.ingest;
     if (!job || job.status !== "ready") {
-      setState((current) => ({ ...current, error: "Draft is not ready." }));
+      setPageError("Your plan is not ready yet.");
       return;
     }
     await run("Program started", async () => {
@@ -202,7 +221,7 @@ export function App(): ReactElement {
     const form = new FormData(event.currentTarget);
     const title = String(form.get("title") ?? "").trim();
     if (!title) {
-      setState((current) => ({ ...current, error: "Standing task title is required." }));
+      setPageError("Standing task title is required.");
       return;
     }
     await run("Standing task added", async () => {
@@ -246,7 +265,7 @@ export function App(): ReactElement {
   async function createCohort(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!activeEnrollment) {
-      setState((current) => ({ ...current, error: "Start a bounded program before creating a cohort." }));
+      setPageError("Start a program before creating a cohort.");
       return;
     }
     const form = new FormData(event.currentTarget);
@@ -261,7 +280,7 @@ export function App(): ReactElement {
 
   async function createInvite(): Promise<void> {
     if (!activeEnrollment?.cohort_id) {
-      setState((current) => ({ ...current, error: "Create a cohort first." }));
+      setPageError("Create a cohort first.");
       return;
     }
     await run("Invite created", async () => {
@@ -275,7 +294,7 @@ export function App(): ReactElement {
     const form = new FormData(event.currentTarget);
     const token = String(form.get("token") ?? "").trim();
     if (!token) {
-      setState((current) => ({ ...current, error: "Invite token is required." }));
+      setPageError("Invite token is required.");
       return;
     }
     await run("Joined cohort", async () => {
@@ -312,9 +331,20 @@ export function App(): ReactElement {
     setState((current) => ({ ...current, settings: next }));
   }
 
+  function saveProfile(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("displayName") ?? "").trim() || "Dapper";
+    const nextTheme = form.get("theme") === "light" ? "light" : "dark";
+    saveProfileName(name);
+    setProfileName(name);
+    setTheme(nextTheme);
+    setState((current) => ({ ...current, status: "Profile saved", error: null }));
+  }
+
   return (
     <>
-      <Sidebar state={state} program={program} standing={standing} changeView={(view) => void changeView(view)} />
+      <Sidebar state={state} program={program} standing={standing} profileName={profileName} changeView={(view) => void changeView(view)} />
       <main className="main">
         <header className="topbar">
           <div>
@@ -322,12 +352,11 @@ export function App(): ReactElement {
             <h1>{pageTitle(state.view)}</h1>
           </div>
           <div className="actions">
-            <button className="icon-button" type="button" onClick={() => void refreshPrimary()} title="Refresh">R</button>
-            <button className="button subtle" type="button" onClick={() => void changeView("settings")}>Settings</button>
+            <button className="profile-button" type="button" onClick={() => void changeView("profile")} title="Profile">{initials(profileName)}</button>
           </div>
         </header>
-        {state.error ? <div className="banner error">{state.error}</div> : null}
-        <div className="banner">{state.status}</div>
+        {state.error?.view === state.view ? <div className="banner error">{state.error.message}</div> : null}
+        {state.status !== "Ready" ? <div className="banner">{state.status}</div> : null}
         {state.view === "today" ? (
           showReturn ? (
             <ReturnView
@@ -356,25 +385,25 @@ export function App(): ReactElement {
             refresh={() => void refreshPrimary()}
           />
         ) : null}
-        {state.view === "ingest" ? <IngestView job={state.ingest} submit={(event) => void ingest(event)} confirm={() => void confirmDraft()} /> : null}
+        {state.view === "ingest" ? <IngestView job={state.ingest} submit={(event) => void ingest(event)} confirm={() => void confirmDraft()} extractFile={(file) => client.extractFile(file).then((response) => response.text)} /> : null}
         {state.view === "programs" ? <ProgramView enrollments={state.enrollments} program={program} activeEnrollment={activeEnrollment} changeView={(view) => void changeView(view)} patchEnrollment={(id, status) => void patchEnrollment(id, status)} toggleTask={(task) => void toggleTask(task)} saveNote={(dayId, note) => void saveNote(dayId, note)} repair={(dayId) => void repair(dayId)} /> : null}
         {state.view === "standing" ? <StandingView standing={standing} createStanding={(event) => void createStanding(event)} toggleTask={(task) => void toggleTask(task)} /> : null}
         {state.view === "heatmap" ? <HeatmapView program={program} stats={state.stats} summary={state.summary} loadStats={() => void loadStats()} /> : null}
         {state.view === "cohort" ? <CohortView activeEnrollment={activeEnrollment} presence={state.cohortPresence} inviteToken={state.inviteToken} createCohort={(event) => void createCohort(event)} createInvite={() => void createInvite()} joinCohort={(event) => void joinCohort(event)} /> : null}
-        {state.view === "settings" ? <SettingsView settings={state.settings} save={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} /> : null}
+        {state.view === "profile" ? <ProfileView settings={state.settings} profileName={profileName} theme={theme} saveProfile={saveProfile} saveAdvanced={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} /> : null}
       </main>
     </>
   );
 }
 
-function Sidebar(props: { state: AppState; program: TodaySection | null; standing: TodaySection | null; changeView: (view: View) => void }): ReactElement {
+function Sidebar(props: { state: AppState; program: TodaySection | null; standing: TodaySection | null; profileName: string; changeView: (view: View) => void }): ReactElement {
   return (
     <aside className="sidebar">
       <div className="brand"><span className="logo">✓</span><span>TRACKED</span></div>
       <nav className="nav">
         {navItems.map((item) => (
           <button key={item.view} className={`nav-item ${props.state.view === item.view ? "active" : ""}`} type="button" onClick={() => props.changeView(item.view)}>
-            <span>{item.icon}</span>{item.label}
+            <span>{item.view === "profile" ? initials(props.profileName) : item.icon}</span>{item.label}
           </button>
         ))}
       </nav>
@@ -391,7 +420,7 @@ const navItems: Array<{ view: View; label: string; icon: string }> = [
   { view: "standing", label: "Standing", icon: "○" },
   { view: "heatmap", label: "Heatmap", icon: "▦" },
   { view: "cohort", label: "Cohort", icon: "◇" },
-  { view: "settings", label: "Settings", icon: "⚙" }
+  { view: "profile", label: "Profile", icon: "●" }
 ];
 
 function SidebarCard(props: { label: string; title: string; detail: string }): ReactElement {
@@ -428,7 +457,7 @@ function TodayView(props: {
             <button className="button subtle" type="button" onClick={props.refresh}>Refresh</button>
           </div>
           {props.program ? <SectionCard section={props.program} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyProgram changeView={props.changeView} />}
-          {props.standing ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyStanding changeView={props.changeView} />}
+          {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyStanding changeView={props.changeView} />}
         </div>
         <aside className="rail">
           <MiniHeatmap section={props.program} changeView={props.changeView} />
@@ -502,29 +531,36 @@ function SectionCard(props: { section: TodaySection; toggleTask: (task: TaskInst
   );
 }
 
-function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HTMLFormElement>) => void; confirm: () => void }): ReactElement {
+function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HTMLFormElement>) => void; confirm: () => void; extractFile: (file: File) => Promise<string> }): ReactElement {
   const draft = props.job?.draft ?? null;
+  const blockedUpload = props.job?.status === "failed" && props.job.error_code === "needs_ocr";
   return (
     <section className="split">
       <div className="panel">
-        <h2>Ingest anything</h2>
+        <h2>Create a program</h2>
         <form className="form" onSubmit={props.submit}>
-          <textarea name="source" rows={9} placeholder="Paste a syllabus, training plan, project checklist, or two sentence plan." />
-          <input name="instruction" placeholder="Optional instruction" />
+          <label className="upload-button">
+            <span>+</span>
+            <input type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*" onChange={(event) => void readUpload(event, props.extractFile)} />
+            Add document
+          </label>
+          <textarea id="source-text" name="source" rows={7} placeholder="Paste a syllabus, training plan, checklist, or short goal." />
+          <input name="instruction" placeholder="Name it or add direction, e.g. 8 week 5K plan" />
           <div className="segmented" role="group">
             <IntensityRadio value="light" label="Light" />
             <IntensityRadio value="standard" label="Standard" />
             <IntensityRadio value="heavy" label="Heavy" />
           </div>
-          <button className="button primary" type="submit">Generate draft</button>
+          <button className="button primary" type="submit">Generate plan</button>
         </form>
-        {props.job ? <p className="job-status">Job {props.job.job_id}: {props.job.status}</p> : null}
+        {props.job ? <p className="job-status">{jobLabel(props.job)}</p> : null}
+        {blockedUpload ? <p className="job-status">Images and scanned PDFs need OCR support. For now, paste extracted text or upload a text document.</p> : null}
       </div>
       <div className="panel">
         <div className="panel-head">
           <div>
-            <h2>{draft ? draft.title : "Draft preview"}</h2>
-            <p>{draft ? `${draft.duration_days} days · ${draft.tasks.length} tasks` : "Waiting for a ready ingest job"}</p>
+            <h2>{draft ? draft.title : "Generated plan"}</h2>
+            <p>{draft ? `${draft.duration_days} days · ${draft.tasks.length} tasks` : "Your generated plan appears here."}</p>
           </div>
           {draft ? <button className="button primary" type="button" onClick={props.confirm}>Start Day 1</button> : null}
         </div>
@@ -534,7 +570,7 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
             <strong>{task.title}</strong>
             <span>{task.estimated_minutes}m</span>
           </div>
-        )) : <div className="empty">Generate a draft to review the program before confirming.</div>}
+        )) : <div className="empty">Nothing generated yet.</div>}
       </div>
     </section>
   );
@@ -586,7 +622,7 @@ function StandingView(props: { standing: TodaySection | null; createStanding: (e
           <p>{props.standing ? props.standing.tasks.length : 0}/5 used</p>
         </div>
       </div>
-      {props.standing ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={() => undefined} repair={() => undefined} /> : <EmptyStanding changeView={() => undefined} />}
+      {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={() => undefined} repair={() => undefined} /> : <EmptyStanding changeView={() => undefined} />}
       <form className="form" onSubmit={props.createStanding}>
         <input name="title" placeholder="Task title" />
         <select name="cadence">
@@ -685,23 +721,51 @@ function CohortView(props: {
   );
 }
 
-function SettingsView(props: { settings: ClientSettings; save: (event: FormEvent<HTMLFormElement>) => void; testNotification: () => void; refresh: () => void }): ReactElement {
+function ProfileView(props: {
+  settings: ClientSettings;
+  profileName: string;
+  theme: Theme;
+  saveProfile: (event: FormEvent<HTMLFormElement>) => void;
+  saveAdvanced: (event: FormEvent<HTMLFormElement>) => void;
+  testNotification: () => void;
+  refresh: () => void;
+}): ReactElement {
   return (
-    <section className="panel narrow">
-      <h2>Settings</h2>
-      <div className="empty">
-        <strong>Session is managed automatically.</strong>
-        <span>No API key or user id is required to use Tracked.</span>
+    <section className="profile-grid">
+      <div className="panel profile-card">
+        <div className="profile-hero">
+          <span className="profile-avatar">{initials(props.profileName)}</span>
+          <div>
+            <h2>{props.profileName}</h2>
+            <p>Google profile will connect here later.</p>
+          </div>
+        </div>
+        <form className="form" onSubmit={props.saveProfile}>
+          <label>Display name<input name="displayName" defaultValue={props.profileName} placeholder="Your name" /></label>
+          <div className="segmented compact" role="group">
+            <label><input type="radio" name="theme" value="dark" defaultChecked={props.theme === "dark"} />Dark</label>
+            <label><input type="radio" name="theme" value="light" defaultChecked={props.theme === "light"} />Light</label>
+          </div>
+          <button className="button primary" type="submit">Save profile</button>
+        </form>
       </div>
-      <form className="form" onSubmit={props.save}>
-        <label>Advanced API base<input name="apiBase" defaultValue={props.settings.apiBase} placeholder="Leave blank for automatic" /></label>
-        <input name="userId" type="hidden" value={props.settings.userId} readOnly />
-        <button className="button subtle" type="submit">Save advanced setting</button>
-      </form>
-      <div className="list">
-        <button className="button subtle" type="button" onClick={props.testNotification}>Queue test notification</button>
-        <button className="button subtle" type="button" onClick={props.refresh}>Reload data</button>
+      <div className="panel">
+        <h2>Account</h2>
+        <div className="profile-actions">
+          <button className="button subtle" type="button" onClick={props.refresh}>Reload data</button>
+          <button className="button subtle" type="button" onClick={props.testNotification}>Test notification</button>
+          <button className="button subtle" type="button">Manage tasks</button>
+          <button className="button danger" type="button">Delete account</button>
+        </div>
       </div>
+      <details className="panel advanced-panel">
+        <summary>Advanced API settings</summary>
+        <form className="form" onSubmit={props.saveAdvanced}>
+          <label>API base<input name="apiBase" defaultValue={props.settings.apiBase} placeholder="Leave blank for automatic" /></label>
+          <input name="userId" type="hidden" value={props.settings.userId} readOnly />
+          <button className="button subtle" type="submit">Save advanced setting</button>
+        </form>
+      </details>
     </section>
   );
 }
@@ -726,8 +790,21 @@ function NotificationsPanel(props: { notifications: NotificationEvent[]; testNot
 }
 
 function MiniHeatmap(props: { section: TodaySection | null; changeView: (view: View) => void }): ReactElement {
+  if (!props.section) {
+    return (
+      <div className="panel compact">
+        <div className="panel-head">
+          <div>
+            <h2>Heatmap</h2>
+            <p>No program yet</p>
+          </div>
+        </div>
+        <div className="empty">Start a program to build your heatmap.</div>
+      </div>
+    );
+  }
   const score = props.section ? dayScore(props.section) : 0;
-  const cells = Array.from({ length: 56 }, (_, index) => index === 11 ? score : Math.max(0, Math.min(100, (index * 17) % 110)));
+  const cells = Array.from({ length: 56 }, (_, index) => index === 11 ? score : 0);
   return (
     <div className="panel compact">
       <div className="panel-head">
@@ -778,6 +855,37 @@ function IntensityRadio(props: { value: Intensity; label: string }): ReactElemen
   return <label><input type="radio" name="intensity" value={props.value} defaultChecked={props.value === "standard"} />{props.label}</label>;
 }
 
+async function readUpload(event: ChangeEvent<HTMLInputElement>, extractFile: (file: File) => Promise<string>): Promise<void> {
+  const file = event.currentTarget.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  const target = document.getElementById("source-text");
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  target.placeholder = `Extracting ${file.name}...`;
+  try {
+    target.value = await extractFile(file);
+  } catch (error) {
+    target.placeholder = error instanceof Error ? error.message : "Could not extract that file.";
+  } finally {
+    event.currentTarget.value = "";
+  }
+}
+
+function jobLabel(job: IngestJob): string {
+  if (job.status === "ready") {
+    return "Plan generated. Review it and start when it feels right.";
+  }
+  if (job.status === "failed") {
+    return `Could not generate this source${job.error_code ? `: ${job.error_code}` : "."}`;
+  }
+  return `Generating: ${job.status}`;
+}
+
 function pageTitle(view: View): string {
   switch (view) {
     case "today":
@@ -792,8 +900,8 @@ function pageTitle(view: View): string {
       return "Heatmap";
     case "cohort":
       return "Cohort";
-    case "settings":
-      return "Settings";
+    case "profile":
+      return "Profile";
   }
 }
 
@@ -899,6 +1007,18 @@ function durationBucket(value: string): "five" | "ten" | "fifteen" | "thirty" {
     return value;
   }
   return "five";
+}
+
+function storedProfileName(): string {
+  return localStorage.getItem("tracked.profileName") ?? "Dapper";
+}
+
+function saveProfileName(name: string): void {
+  localStorage.setItem("tracked.profileName", name);
+}
+
+function storedTheme(): Theme {
+  return localStorage.getItem("tracked.theme") === "light" ? "light" : "dark";
 }
 
 function addDays(date: string, days: number): string {

@@ -14,6 +14,7 @@ rust-version = "1.82"
 license = "UNLICENSED"
 
 [workspace.dependencies]
+base64 = "0.22.1"
 chrono = { version = "0.4.38", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10.0"
 actix-web = "4.11.0"

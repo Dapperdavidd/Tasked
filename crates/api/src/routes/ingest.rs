@@ -188,6 +188,13 @@ pub async fn create_ingest(
 
     tx.commit().await?;
 
+    if status == "queued" {
+        tracked_worker::ingest::process_ingestion_job(&state.pool, job_id)
+            .await
+            .map(|_| ())
+            .map_err(|error| ApiError::Worker(error.to_string()))?;
+    }
+
     Ok(HttpResponse::Ok().json(CreateIngestResponse {
         job_id,
         status: status.to_owned(),

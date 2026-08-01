@@ -10,7 +10,7 @@ export type View =
   | "standing"
   | "heatmap"
   | "cohort"
-  | "settings";
+  | "profile";
 
 export type SectionKind = "Program" | "Standing";
 
@@ -169,6 +169,11 @@ export type SessionResponse = {
   timezone: string;
 };
 
+export type ExtractResponse = {
+  text: string;
+  mime_type: string;
+};
+
 export class ApiClient {
   readonly settings: ClientSettings;
 
@@ -176,10 +181,10 @@ export class ApiClient {
     this.settings = settings;
   }
 
-  createSession(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos"): Promise<SessionResponse> {
+  createSession(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos", displayName = "Dapper"): Promise<SessionResponse> {
     return this.request<SessionResponse>("/v1/sessions", {
       method: "POST",
-      body: { timezone, display_name: "Dapper" },
+      body: { timezone, display_name: displayName },
       auth: false
     });
   }
@@ -260,6 +265,17 @@ export class ApiClient {
     return this.request<NotificationEvent>("/v1/notifications/test", {
       method: "POST",
       body: { title: "Tracked", body: "Notifications are connected." }
+    });
+  }
+
+  async extractFile(file: File): Promise<ExtractResponse> {
+    return this.request<ExtractResponse>("/v1/extract", {
+      method: "POST",
+      body: {
+        filename: file.name,
+        mime_type: file.type || "application/octet-stream",
+        data_base64: await fileBase64(file)
+      }
     });
   }
 
@@ -349,6 +365,17 @@ export class ApiClient {
 
     return payload as T;
   }
+}
+
+async function fileBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary);
 }
 
 export const defaultSettings: ClientSettings = {

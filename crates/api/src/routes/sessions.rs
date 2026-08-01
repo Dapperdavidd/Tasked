@@ -2,7 +2,6 @@ use actix_web::{post, web, HttpResponse};
 use chrono::Utc;
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
-use tracked_core::scoring;
 use tracked_db::rls;
 use uuid::Uuid;
 
@@ -103,16 +102,6 @@ pub async fn create_session(
         .execute(&mut *tx)
         .await?;
 
-    seed_standing_template(&mut tx, standing_program_id, 1, "Take vitamins", 5).await?;
-    seed_standing_template(
-        &mut tx,
-        standing_program_id,
-        2,
-        "Meditate for 10 minutes",
-        10,
-    )
-    .await?;
-
     tx.commit().await?;
     materialise_due_now(&state.pool).await?;
 
@@ -121,33 +110,6 @@ pub async fn create_session(
         display_name,
         timezone,
     }))
-}
-
-async fn seed_standing_template(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    program_id: Uuid,
-    position: i32,
-    title: &str,
-    minutes: u16,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        r#"
-        insert into task_templates (
-          id, program_id, position, title, difficulty, estimated_minutes,
-          cadence, points
-        )
-        values ($1, $2, $3, $4, 1, $5, '{"type":"daily"}'::jsonb, $6)
-        "#,
-    )
-    .bind(Uuid::now_v7())
-    .bind(program_id)
-    .bind(position)
-    .bind(title)
-    .bind(i32::from(minutes))
-    .bind(scoring::task_points(1, minutes))
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
 }
 
 #[derive(Serialize)]

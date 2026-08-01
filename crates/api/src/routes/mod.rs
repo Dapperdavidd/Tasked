@@ -4,6 +4,7 @@ pub mod cohorts;
 pub mod days;
 pub mod devices;
 pub mod enrollments;
+pub mod extract;
 pub mod health;
 pub mod ingest;
 pub mod notifications;
@@ -19,6 +20,7 @@ pub mod today;
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(health::health)
         .service(sessions::create_session)
+        .service(extract::extract_source)
         .service(ingest::create_ingest)
         .service(ingest::get_ingest)
         .service(ingest::ingest_events)
