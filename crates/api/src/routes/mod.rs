@@ -1,6 +1,7 @@
 use actix_web::web;
 
 pub mod cohorts;
+pub mod days;
 pub mod devices;
 pub mod enrollments;
 pub mod health;
@@ -28,6 +29,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(cohorts::create_invite)
         .service(cohorts::join_cohort)
         .service(cohorts::presence)
+        .service(days::get_days)
+        .service(days::patch_day)
         .service(enrollments::list_enrollments)
         .service(enrollments::patch_enrollment);
 }

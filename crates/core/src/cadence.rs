@@ -1,6 +1,26 @@
 use chrono::{Datelike, NaiveDate};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// When a task template fires.
+///
+/// The serialised shape is a contract in three places at once: the
+/// `task_templates.cadence` JSONB column, the `cadence_has_known_type` check
+/// constraint that guards it, and the ingestion pipeline's generated output.
+/// It is defined once, here, so those three cannot drift apart.
+///
+/// ```json
+/// { "type": "daily" }
+/// { "type": "weekly_days", "days": [1, 3, 5] }
+/// { "type": "n_per_week", "count": 3 }
+/// { "type": "once", "day_offset": 12 }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// `deny_unknown_fields` is deliberately absent: serde does not support it on
+// internally tagged enums, so adding it would imply a guarantee that silently
+// does not hold. Unknown *types* are still rejected, which is the case that
+// matters — an unrecognised cadence reaching the materialiser means a user's
+// day quietly has no tasks in it.
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Cadence {
     Daily,
     WeeklyDays { days: Vec<u8> },
@@ -80,6 +100,56 @@ mod tests {
         let cadence = Cadence::Once { day_offset: 12 };
         assert!(cadence.fires_on(12, date(2026, 8, 12)));
         assert!(!cadence.fires_on(11, date(2026, 8, 11)));
+    }
+
+    /// The wire shape is a contract with the database check constraint and with
+    /// the ingestion pipeline. Assert it literally rather than by round trip
+    /// alone, so a rename cannot pass while silently breaking stored rows.
+    #[test]
+    fn serialises_to_the_shape_the_database_constraint_expects() {
+        let cases = [
+            (Cadence::Daily, r#"{"type":"daily"}"#),
+            (
+                Cadence::WeeklyDays {
+                    days: vec![1, 3, 5],
+                },
+                r#"{"type":"weekly_days","days":[1,3,5]}"#,
+            ),
+            (
+                Cadence::NPerWeek { count: 3 },
+                r#"{"type":"n_per_week","count":3}"#,
+            ),
+            (
+                Cadence::Once { day_offset: 12 },
+                r#"{"type":"once","day_offset":12}"#,
+            ),
+        ];
+
+        for (cadence, json) in cases {
+            let encoded = serde_json::to_string(&cadence).expect("cadence serialises");
+            assert_eq!(encoded, json);
+
+            let decoded: Cadence = serde_json::from_str(json).expect("cadence deserialises");
+            assert_eq!(decoded, cadence);
+        }
+    }
+
+    #[test]
+    fn refuses_an_unknown_cadence_type_at_the_boundary() {
+        // Matches the database's cadence_has_known_type constraint. Discovering
+        // an unknown cadence in the materialiser means a user's day silently
+        // has no tasks in it.
+        assert!(serde_json::from_str::<Cadence>(r#"{"type":"every_other_tuesday"}"#).is_err());
+        assert!(serde_json::from_str::<Cadence>(r#"{"days":[1]}"#).is_err());
+        assert!(serde_json::from_str::<Cadence>(r#"{"type":"weekly_days"}"#).is_err());
+
+        // Documented limitation rather than an oversight: serde ignores extra
+        // fields on internally tagged enums and offers no way to refuse them.
+        // Harmless here, because the tag alone determines the semantics.
+        assert_eq!(
+            serde_json::from_str::<Cadence>(r#"{"type":"daily","count":3}"#).expect("tolerated"),
+            Cadence::Daily
+        );
     }
 
     #[test]

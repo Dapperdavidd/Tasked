@@ -2378,6 +2378,8 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "proptest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2390,6 +2392,18 @@ dependencies = [
  "sqlx",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "tracked-ingest"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracked-core",
 ]
 
 [[package]]
