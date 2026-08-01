@@ -17,4 +17,5 @@ tokio.workspace = true
 tracked-core.workspace = true
 tracked-db.workspace = true
 tracked-ingest.workspace = true
+tracked-worker.workspace = true
 uuid.workspace = true

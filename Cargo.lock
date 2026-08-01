@@ -2440,6 +2440,7 @@ dependencies = [
  "tracked-core",
  "tracked-db",
  "tracked-ingest",
+ "tracked-worker",
  "uuid",
 ]
 

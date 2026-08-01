@@ -6,7 +6,11 @@ use tracked_core::calendar;
 use tracked_db::{rls, today as today_db};
 use uuid::Uuid;
 
-use crate::{app::ApiState, auth::UserId, error::ApiError};
+use crate::{
+    app::{materialise_due_now, ApiState},
+    auth::UserId,
+    error::ApiError,
+};
 
 #[derive(Deserialize)]
 pub struct TodayQuery {
@@ -19,6 +23,8 @@ pub async fn today(
     user_id: UserId,
     query: web::Query<TodayQuery>,
 ) -> Result<HttpResponse, ApiError> {
+    materialise_due_now(&state.pool).await?;
+
     let mut tx = state.pool.begin().await?;
     rls::set_request_user(&mut tx, user_id.0).await?;
 

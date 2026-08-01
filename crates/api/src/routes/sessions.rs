@@ -6,7 +6,10 @@ use tracked_core::scoring;
 use tracked_db::rls;
 use uuid::Uuid;
 
-use crate::{app::ApiState, error::ApiError};
+use crate::{
+    app::{materialise_due_now, ApiState},
+    error::ApiError,
+};
 
 #[derive(Deserialize)]
 pub struct CreateSessionBody {
@@ -111,6 +114,7 @@ pub async fn create_session(
     .await?;
 
     tx.commit().await?;
+    materialise_due_now(&state.pool).await?;
 
     Ok(HttpResponse::Ok().json(SessionResponse {
         user_id,

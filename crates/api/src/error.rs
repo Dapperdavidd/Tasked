@@ -9,6 +9,8 @@ pub enum ApiError {
     MissingUser,
     #[error("invalid X-User-Id header")]
     InvalidUser,
+    #[error("worker error: {0}")]
+    Worker(String),
     #[error("database error")]
     Db(#[from] sqlx::Error),
 }
@@ -18,7 +20,7 @@ impl ResponseError for ApiError {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::MissingUser | Self::InvalidUser => StatusCode::UNAUTHORIZED,
-            Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Worker(_) | Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 

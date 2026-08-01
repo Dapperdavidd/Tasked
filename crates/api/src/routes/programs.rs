@@ -8,7 +8,11 @@ use tracked_ingest::{
 };
 use uuid::Uuid;
 
-use crate::{app::ApiState, auth::UserId, error::ApiError};
+use crate::{
+    app::{materialise_due_now, ApiState},
+    auth::UserId,
+    error::ApiError,
+};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -189,6 +193,7 @@ pub async fn create_program(
         .await?;
 
     tx.commit().await?;
+    materialise_due_now(&state.pool).await?;
 
     Ok(HttpResponse::Ok().json(CreateProgramResponse {
         program_id,
