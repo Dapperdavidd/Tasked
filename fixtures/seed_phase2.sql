@@ -144,42 +144,6 @@ values
     5,
     '{"type":"daily"}'::jsonb,
     6
-  ),
-  (
-    '018ff9c0-0000-7000-8000-000000000301',
-    '018ff9c0-0000-7000-8000-000000000102',
-    1,
-    'Take vitamins',
-    null,
-    'Health',
-    1,
-    5,
-    '{"type":"daily"}'::jsonb,
-    6
-  ),
-  (
-    '018ff9c0-0000-7000-8000-000000000302',
-    '018ff9c0-0000-7000-8000-000000000102',
-    2,
-    'Meditate for 10 minutes',
-    null,
-    'Mind',
-    1,
-    10,
-    '{"type":"daily"}'::jsonb,
-    7
-  ),
-  (
-    '018ff9c0-0000-7000-8000-000000000303',
-    '018ff9c0-0000-7000-8000-000000000102',
-    3,
-    'Read 10 pages',
-    null,
-    'Learning',
-    1,
-    15,
-    '{"type":"n_per_week","count":3}'::jsonb,
-    8
   )
 on conflict (id) do nothing;
 

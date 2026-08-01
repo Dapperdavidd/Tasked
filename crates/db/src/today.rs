@@ -33,6 +33,14 @@ pub async fn sections_for_today(
         where e.user_id = $1
           and e.status = 'active'
           and d.local_date = $2
+          and (
+            not e.is_standing
+            or exists (
+              select 1
+              from task_instances ti
+              where ti.day_id = d.id
+            )
+          )
         order by e.is_standing asc, e.created_at asc
         "#,
     )

@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 const INGEST_JOB_KIND: &str = "ingest_process";
 const DEFAULT_DURATION_DAYS: u16 = 28;
+const STARTER_DURATION_DAYS: u16 = 14;
 const DEFAULT_TASK_MINUTES: u16 = 30;
 
 #[derive(Debug, thiserror::Error)]
@@ -414,7 +415,20 @@ fn generate_program(
     intensity: Intensity,
 ) -> GeneratedProgram {
     let lines = extract_task_lines(text);
-    let tasks = if lines.is_empty() {
+    let is_starter_prompt = should_expand_prompt(text, instruction, &lines);
+    let inferred_duration = if is_starter_prompt {
+        classification
+            .suggested_duration_days
+            .unwrap_or(STARTER_DURATION_DAYS)
+    } else {
+        classification
+            .suggested_duration_days
+            .unwrap_or_else(|| default_duration_for_tasks(classification.kind, lines.len()))
+    }
+    .clamp(1, 730);
+    let tasks = if is_starter_prompt {
+        starter_plan_tasks(text, instruction, intensity, inferred_duration)
+    } else if lines.is_empty() {
         vec![GeneratedTask {
             title: fallback_title(text),
             description: compact_description(text),
@@ -431,10 +445,6 @@ fn generate_program(
             .collect()
     };
 
-    let inferred_duration = classification
-        .suggested_duration_days
-        .unwrap_or_else(|| default_duration_for_tasks(classification.kind, tasks.len()));
-
     GeneratedProgram {
         title: infer_title(text, instruction, classification.kind),
         summary: instruction
@@ -445,11 +455,224 @@ fn generate_program(
                 compact_description(text).unwrap_or_else(|| "Generated plan".to_owned())
             }),
         kind: classification.kind,
-        duration_days: inferred_duration.clamp(1, 730),
+        duration_days: inferred_duration,
         confidence: classification.confidence,
         tasks,
         warnings: Vec::new(),
     }
+}
+
+fn should_expand_prompt(text: &str, instruction: Option<&str>, lines: &[String]) -> bool {
+    if lines.len() > 1 {
+        return false;
+    }
+
+    let combined = format!("{text}\n{}", instruction.unwrap_or_default()).to_lowercase();
+    let word_count = combined.split_whitespace().count();
+    let has_schedule_markers = [
+        "day 1",
+        "week 1",
+        "module",
+        "chapter",
+        "lesson",
+        "session",
+        "every monday",
+        "mon/wed/fri",
+    ]
+    .iter()
+    .any(|marker| combined.contains(marker));
+
+    word_count <= 18 && !has_schedule_markers
+}
+
+fn starter_plan_tasks(
+    text: &str,
+    instruction: Option<&str>,
+    intensity: Intensity,
+    duration_days: u16,
+) -> Vec<GeneratedTask> {
+    let combined = format!("{text}\n{}", instruction.unwrap_or_default()).to_lowercase();
+    let include_rust = contains_any(
+        &combined,
+        &["rust", "rustlang", "borrow checker", "cargo", "ownership"],
+    );
+    let include_fitness = contains_any(
+        &combined,
+        &["fitness", "workout", "gym", "run", "exercise", "health"],
+    );
+    let include_productivity = contains_any(
+        &combined,
+        &[
+            "productivity",
+            "focus",
+            "work",
+            "study",
+            "routine",
+            "discipline",
+        ],
+    );
+
+    let titles: Vec<(&str, &str)> = if include_rust {
+        vec![
+            ("Install Rust and run Hello World with Cargo", "rust"),
+            ("Learn variables, mutability, and basic types", "rust"),
+            ("Practice functions, expressions, and control flow", "rust"),
+            ("Understand ownership with move examples", "rust"),
+            ("Practice borrowing and references", "rust"),
+            ("Use structs, methods, and associated functions", "rust"),
+            ("Model choices with enums and match", "rust"),
+            ("Work with vectors, strings, and iterators", "rust"),
+            ("Handle errors with Option and Result", "rust"),
+            ("Build a small command-line Rust project", "rust"),
+            ("Organize code with modules and packages", "rust"),
+            ("Read files and parse simple input", "rust"),
+            ("Write tests for your Rust code", "rust"),
+            ("Refactor and document the final project", "rust"),
+        ]
+    } else {
+        match (include_fitness, include_productivity) {
+            (true, true) => vec![
+                ("Set your baseline and plan tomorrow", "fitness"),
+                ("Complete a mobility walk and clear one priority", "fitness"),
+                (
+                    "Do a beginner strength circuit and a 25-minute focus block",
+                    "fitness",
+                ),
+                ("Stretch, hydrate, and reset your workspace", "recovery"),
+                ("Walk briskly and finish one small deliverable", "fitness"),
+                ("Train core basics and review your week", "fitness"),
+                ("Take an active recovery walk and plan meals", "recovery"),
+                (
+                    "Repeat the strength circuit and protect one deep-work block",
+                    "fitness",
+                ),
+                (
+                    "Add intervals to your walk and remove one distraction",
+                    "fitness",
+                ),
+                ("Do mobility work and batch tomorrow's tasks", "recovery"),
+                (
+                    "Complete a longer beginner workout and ship one task",
+                    "fitness",
+                ),
+                ("Stretch, reflect, and simplify your task list", "recovery"),
+                ("Retest your baseline and compare progress", "fitness"),
+                ("Build your next weekly routine", "productivity"),
+            ],
+            (true, false) => vec![
+                ("Set your movement baseline", "fitness"),
+                ("Complete a brisk walk and stretch", "fitness"),
+                ("Do a beginner strength circuit", "fitness"),
+                ("Practice mobility and recovery breathing", "recovery"),
+                ("Walk with short easy intervals", "fitness"),
+                ("Train core stability basics", "fitness"),
+                ("Take an active recovery walk", "recovery"),
+                ("Repeat the strength circuit", "fitness"),
+                ("Add gentle cardio intervals", "fitness"),
+                ("Stretch hips, back, and shoulders", "recovery"),
+                ("Complete a full beginner workout", "fitness"),
+                ("Do light recovery and hydration prep", "recovery"),
+                ("Retest your baseline", "fitness"),
+                ("Choose your next fitness target", "fitness"),
+            ],
+            (false, true) => vec![
+                ("Audit your current routine", "productivity"),
+                ("Pick one priority and clear your workspace", "productivity"),
+                ("Run a 25-minute focus block", "productivity"),
+                ("Create a simple task capture system", "productivity"),
+                ("Batch small tasks into one session", "productivity"),
+                ("Protect a no-distraction work block", "productivity"),
+                ("Review the week and remove one blocker", "productivity"),
+                ("Plan tomorrow before ending work", "productivity"),
+                ("Deepen one focus block", "productivity"),
+                ("Clean up your calendar and commitments", "productivity"),
+                ("Finish one visible deliverable", "productivity"),
+                ("Automate or template one repeated task", "productivity"),
+                ("Retest your routine under real conditions", "productivity"),
+                ("Design your next weekly operating system", "productivity"),
+            ],
+            (false, false) => vec![
+                ("Define the goal and success measure", "planning"),
+                ("Break the goal into small milestones", "planning"),
+                ("Complete the first starter task", "execution"),
+                ("Review friction and adjust the plan", "review"),
+                ("Build the second practical step", "execution"),
+                ("Practice the core skill for one block", "execution"),
+                ("Review progress and simplify scope", "review"),
+                ("Repeat the highest-value action", "execution"),
+                ("Add one small challenge", "execution"),
+                ("Document what is working", "review"),
+                ("Finish a useful mini deliverable", "execution"),
+                ("Clean up loose ends", "execution"),
+                ("Retest the success measure", "review"),
+                ("Plan the next cycle", "planning"),
+            ],
+        }
+    };
+
+    expand_titles(titles, usize::from(duration_days))
+        .into_iter()
+        .enumerate()
+        .map(|(index, (title, category))| GeneratedTask {
+            title: title.to_owned(),
+            description: None,
+            category: Some(category.to_owned()),
+            difficulty: starter_difficulty(index),
+            estimated_minutes: starter_minutes(intensity, index),
+            cadence: tracked_core::cadence::Cadence::Once {
+                day_offset: u32::try_from(index).unwrap_or(u32::MAX),
+            },
+        })
+        .collect()
+}
+
+fn expand_titles<'a>(
+    titles: Vec<(&'a str, &'a str)>,
+    duration_days: usize,
+) -> Vec<(&'a str, &'a str)> {
+    if duration_days <= titles.len() {
+        return titles.into_iter().take(duration_days).collect();
+    }
+
+    let mut expanded = Vec::with_capacity(duration_days);
+    while expanded.len() < duration_days {
+        for item in &titles {
+            if expanded.len() == duration_days {
+                break;
+            }
+            expanded.push(*item);
+        }
+    }
+    expanded
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn starter_difficulty(index: usize) -> u8 {
+    match index {
+        0..=3 => 1,
+        4..=9 => 2,
+        10..=12 => 3,
+        _ => 2,
+    }
+}
+
+fn starter_minutes(intensity: Intensity, index: usize) -> u16 {
+    let base = match intensity {
+        Intensity::Light => 15,
+        Intensity::Standard => 30,
+        Intensity::Heavy => 45,
+    };
+    let extra = if index >= 10 {
+        10
+    } else if index >= 4 {
+        5
+    } else {
+        0
+    };
+    (base + extra).min(intensity.daily_cap_minutes())
 }
 
 fn task_from_line(line: &str, index: usize, kind: ProgramKind) -> GeneratedTask {
@@ -565,11 +788,7 @@ fn extract_task_lines(text: &str) -> Vec<String> {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .filter(|line| {
-            line.chars()
-                .next()
-                .is_some_and(|character| character.is_ascii_digit())
-        })
+        .filter(|line| is_numbered_list_item(line))
         .map(ToOwned::to_owned)
         .collect();
     if !numbered.is_empty() {
@@ -584,8 +803,29 @@ fn extract_task_lines(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_numbered_list_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let digit_len = trimmed
+        .char_indices()
+        .take_while(|(_, character)| character.is_ascii_digit())
+        .last()
+        .map(|(index, character)| index + character.len_utf8());
+    let Some(digit_len) = digit_len else {
+        return false;
+    };
+    trimmed[digit_len..]
+        .chars()
+        .next()
+        .is_some_and(|character| character == '.' || character == ')')
+}
+
 fn infer_duration_days(text: &str) -> Option<u16> {
-    for token in text.split_whitespace().collect::<Vec<_>>().windows(2) {
+    let words = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    for token in words.windows(2) {
         let [amount, unit] = token else {
             continue;
         };
@@ -739,6 +979,12 @@ fn has_routine_markers(text: &str) -> bool {
 }
 
 fn has_curriculum_markers(text: &str) -> bool {
+    if (text.contains("learning plan") || text.contains("study plan") || text.contains("course"))
+        && (text.contains("learn") || text.contains("beginner") || text.contains("study"))
+    {
+        return true;
+    }
+
     [
         "day 1",
         "week 1",
@@ -786,6 +1032,14 @@ mod tests {
     }
 
     #[test]
+    fn infers_duration_from_hyphenated_days() {
+        assert_eq!(
+            infer_duration_days("10-day beginner Rust learning plan"),
+            Some(10)
+        );
+    }
+
+    #[test]
     fn routine_generation_maps_common_cadences() {
         let task = task_from_line(
             "Gym Monday Wednesday Friday 45 min",
@@ -811,6 +1065,76 @@ mod tests {
     fn generation_uses_bullets_when_present() {
         let tasks = extract_task_lines("- Run 30 min\n- Stretch\nNotes");
         assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn vague_fitness_productivity_prompt_expands_into_starter_plan() {
+        let classification = classify_source("beginner fitness and productivity program", None);
+        let generated = generate_program(
+            "beginner fitness and productivity program",
+            None,
+            &classification,
+            Intensity::Standard,
+        );
+
+        assert_eq!(generated.duration_days, STARTER_DURATION_DAYS);
+        assert_eq!(generated.tasks.len(), usize::from(STARTER_DURATION_DAYS));
+        assert_ne!(
+            generated.tasks[0].title.to_lowercase(),
+            "beginner fitness and productivity program"
+        );
+        assert!(generated
+            .tasks
+            .iter()
+            .any(|task| task.category.as_deref() == Some("fitness")));
+        assert!(generated
+            .tasks
+            .iter()
+            .any(|task| task.category.as_deref() == Some("productivity")));
+    }
+
+    #[test]
+    fn rust_learning_prompt_expands_to_requested_curriculum_length() {
+        let prompt = "create a 10-day beginner Rust learning plan";
+        let classification = classify_source(prompt, None);
+        let generated = generate_program(prompt, None, &classification, Intensity::Standard);
+
+        assert_eq!(classification.kind, ProgramKind::Curriculum);
+        assert_eq!(generated.duration_days, 10);
+        assert_eq!(generated.tasks.len(), 10);
+        assert_eq!(
+            generated.tasks[0].title,
+            "Install Rust and run Hello World with Cargo"
+        );
+        assert!(generated
+            .tasks
+            .iter()
+            .all(|task| task.category.as_deref() == Some("rust")));
+        assert!(generated
+            .tasks
+            .iter()
+            .all(|task| matches!(task.cadence, Cadence::Once { .. })));
+    }
+
+    #[test]
+    fn duration_prompt_is_not_mistaken_for_numbered_task() {
+        let tasks = extract_task_lines("10-day beginner Rust learning plan");
+        assert_eq!(tasks.len(), 1);
+        assert!(!is_numbered_list_item(&tasks[0]));
+    }
+
+    #[test]
+    fn listed_source_still_uses_user_items() {
+        let classification = classify_source("- Run 30 min\n- Stretch", None);
+        let generated = generate_program(
+            "- Run 30 min\n- Stretch",
+            None,
+            &classification,
+            Intensity::Standard,
+        );
+
+        assert_eq!(generated.tasks.len(), 2);
+        assert_eq!(generated.tasks[0].title, "Run 30 min");
     }
 
     #[test]

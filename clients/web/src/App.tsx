@@ -62,6 +62,7 @@ export function App(): ReactElement {
   const standing = state.today?.sections.find((section) => section.kind === "Standing") ?? null;
   const activeEnrollment = program ? state.enrollments.find((enrollment) => enrollment.id === program.enrollment_id) ?? null : null;
   const [returnDismissedFor, setReturnDismissedFor] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const showReturn = state.today?.lapsed_days !== null && state.today?.lapsed_days !== undefined && returnDismissedFor !== state.today.local_date;
 
   useEffect(() => {
@@ -150,6 +151,7 @@ export function App(): ReactElement {
   }
 
   async function changeView(view: View): Promise<void> {
+    setMenuOpen(false);
     setState((current) => ({ ...current, view, error: null }));
     if (view === "heatmap" && state.stats === null && program) {
       await loadStats(program);
@@ -344,7 +346,13 @@ export function App(): ReactElement {
 
   return (
     <>
-      <Sidebar state={state} program={program} standing={standing} profileName={profileName} changeView={(view) => void changeView(view)} />
+      <Sidebar
+        state={state}
+        menuOpen={menuOpen}
+        profileName={profileName}
+        changeView={(view) => void changeView(view)}
+        toggleMenu={() => setMenuOpen((open) => !open)}
+      />
       <main className="main">
         <header className="topbar">
           <div>
@@ -356,7 +364,7 @@ export function App(): ReactElement {
           </div>
         </header>
         {state.error?.view === state.view ? <div className="banner error">{state.error.message}</div> : null}
-        {state.status !== "Ready" ? <div className="banner">{state.status}</div> : null}
+        {state.status === "Working..." ? <div className="banner">{state.status}</div> : null}
         {state.view === "today" ? (
           showReturn ? (
             <ReturnView
@@ -373,7 +381,6 @@ export function App(): ReactElement {
               scaleDown={() => activeEnrollment ? void returnEnrollment(activeEnrollment.id, "scale_down") : undefined}
             />
           ) : <TodayView
-            sections={state.today?.sections ?? []}
             program={program}
             standing={standing}
             notifications={state.notifications}
@@ -390,15 +397,18 @@ export function App(): ReactElement {
         {state.view === "standing" ? <StandingView standing={standing} createStanding={(event) => void createStanding(event)} toggleTask={(task) => void toggleTask(task)} /> : null}
         {state.view === "heatmap" ? <HeatmapView program={program} stats={state.stats} summary={state.summary} loadStats={() => void loadStats()} /> : null}
         {state.view === "cohort" ? <CohortView activeEnrollment={activeEnrollment} presence={state.cohortPresence} inviteToken={state.inviteToken} createCohort={(event) => void createCohort(event)} createInvite={() => void createInvite()} joinCohort={(event) => void joinCohort(event)} /> : null}
-        {state.view === "profile" ? <ProfileView settings={state.settings} profileName={profileName} theme={theme} saveProfile={saveProfile} saveAdvanced={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} /> : null}
+        {state.view === "profile" ? <ProfileView settings={state.settings} profileName={profileName} theme={theme} saveProfile={saveProfile} saveAdvanced={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} manageTasks={() => void changeView("standing")} /> : null}
       </main>
     </>
   );
 }
 
-function Sidebar(props: { state: AppState; program: TodaySection | null; standing: TodaySection | null; profileName: string; changeView: (view: View) => void }): ReactElement {
+function Sidebar(props: { state: AppState; menuOpen: boolean; profileName: string; changeView: (view: View) => void; toggleMenu: () => void }): ReactElement {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${props.menuOpen ? "open" : ""}`}>
+      <button className="menu-trigger" type="button" onClick={props.toggleMenu} aria-expanded={props.menuOpen} aria-label="Open navigation">
+        <span className="logo">✓</span>
+      </button>
       <div className="brand"><span className="logo">✓</span><span>TRACKED</span></div>
       <nav className="nav">
         {navItems.map((item) => (
@@ -407,8 +417,6 @@ function Sidebar(props: { state: AppState; program: TodaySection | null; standin
           </button>
         ))}
       </nav>
-      <SidebarCard label="Active program" title={props.program?.title ?? "No active program"} detail={progressLabel(props.program)} />
-      <SidebarCard label="Standing list" title={props.standing ? `${props.standing.tasks.length}/5 used` : "0/5 used"} detail={props.standing ? `${props.standing.tasks.filter(done).length} logged today` : "Add a baseline"} />
     </aside>
   );
 }
@@ -423,12 +431,7 @@ const navItems: Array<{ view: View; label: string; icon: string }> = [
   { view: "profile", label: "Profile", icon: "●" }
 ];
 
-function SidebarCard(props: { label: string; title: string; detail: string }): ReactElement {
-  return <div className="sidebar-card"><p>{props.label}</p><strong>{props.title}</strong><span>{props.detail}</span></div>;
-}
-
 function TodayView(props: {
-  sections: TodaySection[];
   program: TodaySection | null;
   standing: TodaySection | null;
   notifications: NotificationEvent[];
@@ -439,30 +442,35 @@ function TodayView(props: {
   changeView: (view: View) => void;
   refresh: () => void;
 }): ReactElement {
+  const hasMetrics = props.program !== null || Boolean(props.standing?.tasks.length);
+  const hasRail = props.program !== null || props.notifications.length > 0;
   return (
     <>
-      <section className="metrics">
-        <Metric label="Daily score" value={props.program ? String(dayScore(props.program)) : "0"} sub="Great day" />
-        <Metric label="Streak" value={props.program ? `${props.program.streak.current} days` : "0 days"} sub={props.program ? `Longest ${props.program.streak.longest}` : "No active program"} />
-        <Metric label="Program progress" value={progressLabel(props.program)} sub={props.program ? `${props.program.tasks.filter(done).length}/${props.program.tasks.length} tasks` : "Start a program"} />
-        <Metric label="Standing" value={props.standing ? `${props.standing.tasks.filter(done).length}/${props.standing.tasks.length}` : "0/5"} sub="baseline tasks" />
-      </section>
-      <section className="split">
+      {hasMetrics ? (
+        <section className="metrics">
+          {props.program ? <Metric label="Daily score" value={String(dayScore(props.program))} sub="Today" /> : null}
+          {props.program ? <Metric label="Streak" value={`${props.program.streak.current} days`} sub={`Longest ${props.program.streak.longest}`} /> : null}
+          {props.program ? <Metric label="Program progress" value={progressLabel(props.program)} sub={`${props.program.tasks.filter(done).length}/${props.program.tasks.length} tasks`} /> : null}
+          {props.standing?.tasks.length ? <Metric label="Standing" value={`${props.standing.tasks.filter(done).length}/${props.standing.tasks.length}`} sub="Today" /> : null}
+        </section>
+      ) : null}
+      <section className={hasRail ? "split" : "single-column"}>
         <div className="plan-panel">
           <div className="panel-head">
             <div>
               <h2>Today's plan</h2>
-              <p>{props.sections.length} section{props.sections.length === 1 ? "" : "s"}</p>
             </div>
             <button className="button subtle" type="button" onClick={props.refresh}>Refresh</button>
           </div>
           {props.program ? <SectionCard section={props.program} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyProgram changeView={props.changeView} />}
-          {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyStanding changeView={props.changeView} />}
+          {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : null}
         </div>
-        <aside className="rail">
-          <MiniHeatmap section={props.program} changeView={props.changeView} />
-          <NotificationsPanel notifications={props.notifications} testNotification={props.testNotification} />
-        </aside>
+        {hasRail ? (
+          <aside className="rail">
+            {props.program ? <MiniHeatmap section={props.program} changeView={props.changeView} /> : null}
+            {props.notifications.length > 0 ? <NotificationsPanel notifications={props.notifications} testNotification={props.testNotification} /> : null}
+          </aside>
+        ) : null}
       </section>
     </>
   );
@@ -535,7 +543,7 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
   const draft = props.job?.draft ?? null;
   const blockedUpload = props.job?.status === "failed" && props.job.error_code === "needs_ocr";
   return (
-    <section className="split">
+    <section className={draft ? "split" : "single-column"}>
       <div className="panel">
         <h2>Create a program</h2>
         <form className="form" onSubmit={props.submit}>
@@ -556,22 +564,22 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
         {props.job ? <p className="job-status">{jobLabel(props.job)}</p> : null}
         {blockedUpload ? <p className="job-status">Images and scanned PDFs need OCR support. For now, paste extracted text or upload a text document.</p> : null}
       </div>
-      <div className="panel">
+      {draft ? <div className="panel">
         <div className="panel-head">
           <div>
-            <h2>{draft ? draft.title : "Generated plan"}</h2>
-            <p>{draft ? `${draft.duration_days} days · ${draft.tasks.length} tasks` : "Your generated plan appears here."}</p>
+            <h2>{draft.title}</h2>
+            <p>{draft.duration_days} days · {draft.tasks.length} tasks</p>
           </div>
-          {draft ? <button className="button primary" type="button" onClick={props.confirm}>Start Day 1</button> : null}
+          <button className="button primary" type="button" onClick={props.confirm}>Start Day 1</button>
         </div>
-        {draft ? draft.tasks.map((task, index) => (
+        {draft.tasks.map((task, index) => (
           <div className="preview-row" key={`${task.title}-${index}`}>
             <span>Day {index + 1}</span>
             <strong>{task.title}</strong>
             <span>{task.estimated_minutes}m</span>
           </div>
-        )) : <div className="empty">Nothing generated yet.</div>}
-      </div>
+        ))}
+      </div> : null}
     </section>
   );
 }
@@ -592,7 +600,7 @@ function ProgramView(props: {
       <div className="panel-head">
         <div>
           <h2>Programs</h2>
-          <p>{bounded.length} bounded enrollment{bounded.length === 1 ? "" : "s"}</p>
+          {bounded.length > 0 ? <p>{bounded.length} program{bounded.length === 1 ? "" : "s"}</p> : null}
         </div>
         <button className="button primary" type="button" onClick={() => props.changeView("ingest")}>New program</button>
       </div>
@@ -618,11 +626,10 @@ function StandingView(props: { standing: TodaySection | null; createStanding: (e
     <section className="panel narrow">
       <div className="panel-head">
         <div>
-          <h2>Five slots</h2>
-          <p>{props.standing ? props.standing.tasks.length : 0}/5 used</p>
+          <h2>Standing list</h2>
         </div>
       </div>
-      {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={() => undefined} repair={() => undefined} /> : <EmptyStanding changeView={() => undefined} />}
+      {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={() => undefined} repair={() => undefined} /> : null}
       <form className="form" onSubmit={props.createStanding}>
         <input name="title" placeholder="Task title" />
         <select name="cadence">
@@ -729,6 +736,7 @@ function ProfileView(props: {
   saveAdvanced: (event: FormEvent<HTMLFormElement>) => void;
   testNotification: () => void;
   refresh: () => void;
+  manageTasks: () => void;
 }): ReactElement {
   return (
     <section className="profile-grid">
@@ -754,8 +762,8 @@ function ProfileView(props: {
         <div className="profile-actions">
           <button className="button subtle" type="button" onClick={props.refresh}>Reload data</button>
           <button className="button subtle" type="button" onClick={props.testNotification}>Test notification</button>
-          <button className="button subtle" type="button">Manage tasks</button>
-          <button className="button danger" type="button">Delete account</button>
+          <button className="button subtle" type="button" onClick={props.manageTasks}>Manage tasks</button>
+          <button className="button danger" type="button" disabled title="Available after authentication is connected">Delete account</button>
         </div>
       </div>
       <details className="panel advanced-panel">
@@ -845,10 +853,6 @@ function Metric(props: { label: string; value: string; sub: string }): ReactElem
 
 function EmptyProgram(props: { changeView: (view: View) => void }): ReactElement {
   return <div className="empty"><strong>No active program.</strong><button className="button primary" type="button" onClick={() => props.changeView("ingest")}>Start one</button></div>;
-}
-
-function EmptyStanding(props: { changeView: (view: View) => void }): ReactElement {
-  return <div className="empty"><strong>Standing list is empty.</strong><button className="button subtle" type="button" onClick={() => props.changeView("standing")}>Add up to five</button></div>;
 }
 
 function IntensityRadio(props: { value: Intensity; label: string }): ReactElement {
