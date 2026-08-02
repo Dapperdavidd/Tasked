@@ -91,6 +91,8 @@ export type StatsResponse = {
     status: string;
     available_points: number;
     earned_points: number;
+    completed_tasks: number;
+    available_tasks: number;
   }>;
   tasks: Array<{
     template_id: string;

@@ -25,6 +25,9 @@ impl ResponseError for ApiError {
     }
 
     fn error_response(&self) -> HttpResponse {
+        if matches!(self, Self::Worker(_) | Self::Db(_)) {
+            eprintln!("{self:?}");
+        }
         HttpResponse::build(self.status_code()).json(ErrorBody {
             error: self.to_string(),
         })

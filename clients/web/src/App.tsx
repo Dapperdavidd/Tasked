@@ -150,6 +150,19 @@ export function App(): ReactElement {
     return { today, enrollments, notifications, cohortPresence };
   }
 
+  async function loadStartedProgram(loadClient: ApiClient): Promise<Pick<AppState, "today" | "enrollments">> {
+    let latest: Pick<AppState, "today" | "enrollments"> | null = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const [today, enrollments] = await Promise.all([loadClient.today(), loadClient.enrollments()]);
+      latest = { today, enrollments };
+      if (today.sections.some((section) => section.kind === "Program")) {
+        return latest;
+      }
+      await delay(250 * (attempt + 1));
+    }
+    return latest ?? { today: await loadClient.today(), enrollments: await loadClient.enrollments() };
+  }
+
   async function changeView(view: View): Promise<void> {
     setMenuOpen(false);
     setState((current) => ({ ...current, view, error: null }));
@@ -187,12 +200,18 @@ export function App(): ReactElement {
     });
   }
 
-  async function ingest(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function ingest(event: FormEvent<HTMLFormElement>, uploadedText = ""): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const pastedSource = String(form.get("source") ?? "").trim();
+    const source = [uploadedText.trim(), pastedSource].filter(Boolean).join("\n\n");
+    if (!source.trim()) {
+      setPageError("Add a document or describe the plan you want.");
+      return;
+    }
     await run("Ingest checked", async () => {
       const created = await client.createIngest(
-        String(form.get("source") ?? ""),
+        source,
         asIntensity(form.get("intensity")),
         String(form.get("instruction") ?? "")
       );
@@ -213,7 +232,7 @@ export function App(): ReactElement {
     }
     await run("Program started", async () => {
       await client.confirmDraft(job.job_id, new Date().toISOString().slice(0, 10), "Africa/Lagos", 0);
-      const [today, enrollments] = await Promise.all([client.today(), client.enrollments()]);
+      const { today, enrollments } = await loadStartedProgram(client);
       return { view: "today", today, enrollments };
     });
   }
@@ -392,7 +411,7 @@ export function App(): ReactElement {
             refresh={() => void refreshPrimary()}
           />
         ) : null}
-        {state.view === "ingest" ? <IngestView job={state.ingest} submit={(event) => void ingest(event)} confirm={() => void confirmDraft()} extractFile={(file) => client.extractFile(file).then((response) => response.text)} /> : null}
+        {state.view === "ingest" ? <IngestView job={state.ingest} submit={(event, uploadedText) => void ingest(event, uploadedText)} confirm={() => void confirmDraft()} extractFile={(file) => client.extractFile(file).then((response) => response.text)} /> : null}
         {state.view === "programs" ? <ProgramView enrollments={state.enrollments} program={program} activeEnrollment={activeEnrollment} changeView={(view) => void changeView(view)} patchEnrollment={(id, status) => void patchEnrollment(id, status)} toggleTask={(task) => void toggleTask(task)} saveNote={(dayId, note) => void saveNote(dayId, note)} repair={(dayId) => void repair(dayId)} /> : null}
         {state.view === "standing" ? <StandingView standing={standing} createStanding={(event) => void createStanding(event)} toggleTask={(task) => void toggleTask(task)} /> : null}
         {state.view === "heatmap" ? <HeatmapView program={program} stats={state.stats} summary={state.summary} loadStats={() => void loadStats()} /> : null}
@@ -442,7 +461,7 @@ function TodayView(props: {
   changeView: (view: View) => void;
   refresh: () => void;
 }): ReactElement {
-  const hasMetrics = props.program !== null || Boolean(props.standing?.tasks.length);
+  const hasMetrics = props.program !== null;
   const hasRail = props.program !== null || props.notifications.length > 0;
   return (
     <>
@@ -451,7 +470,6 @@ function TodayView(props: {
           {props.program ? <Metric label="Daily score" value={String(dayScore(props.program))} sub="Today" /> : null}
           {props.program ? <Metric label="Streak" value={`${props.program.streak.current} days`} sub={`Longest ${props.program.streak.longest}`} /> : null}
           {props.program ? <Metric label="Program progress" value={progressLabel(props.program)} sub={`${props.program.tasks.filter(done).length}/${props.program.tasks.length} tasks`} /> : null}
-          {props.standing?.tasks.length ? <Metric label="Standing" value={`${props.standing.tasks.filter(done).length}/${props.standing.tasks.length}`} sub="Today" /> : null}
         </section>
       ) : null}
       <section className={hasRail ? "split" : "single-column"}>
@@ -463,7 +481,6 @@ function TodayView(props: {
             <button className="button subtle" type="button" onClick={props.refresh}>Refresh</button>
           </div>
           {props.program ? <SectionCard section={props.program} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : <EmptyProgram changeView={props.changeView} />}
-          {props.standing && props.standing.tasks.length > 0 ? <SectionCard section={props.standing} toggleTask={props.toggleTask} saveNote={props.saveNote} repair={props.repair} /> : null}
         </div>
         {hasRail ? (
           <aside className="rail">
@@ -539,19 +556,38 @@ function SectionCard(props: { section: TodaySection; toggleTask: (task: TaskInst
   );
 }
 
-function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HTMLFormElement>) => void; confirm: () => void; extractFile: (file: File) => Promise<string> }): ReactElement {
+function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HTMLFormElement>, uploadedText: string) => void; confirm: () => void; extractFile: (file: File) => Promise<string> }): ReactElement {
   const draft = props.job?.draft ?? null;
   const blockedUpload = props.job?.status === "failed" && props.job.error_code === "needs_ocr";
+  const [uploadedText, setUploadedText] = useState("");
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   return (
     <section className={draft ? "split" : "single-column"}>
       <div className="panel">
         <h2>Create a program</h2>
-        <form className="form" onSubmit={props.submit}>
+        <form className="form" onSubmit={(event) => props.submit(event, uploadedText)}>
           <label className="upload-button">
             <span>+</span>
-            <input type="file" accept=".txt,.md,.csv,.json,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*" onChange={(event) => void readUpload(event, props.extractFile)} />
+            <input
+              type="file"
+              accept=".txt,.md,.csv,.json,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
+              onChange={(event) => void readUpload(event, props.extractFile, setUploadedText, setUploadedFileName, setUploadStatus)}
+            />
             Add document
           </label>
+          {uploadedFileName ? (
+            <div className="attachment-row">
+              <span>Document attached</span>
+              <strong>{uploadedFileName}</strong>
+              <button className="icon-button" type="button" onClick={() => {
+                setUploadedText("");
+                setUploadedFileName(null);
+                setUploadStatus(null);
+              }}>x</button>
+            </div>
+          ) : null}
+          {uploadStatus ? <p className="job-status">{uploadStatus}</p> : null}
           <textarea id="source-text" name="source" rows={7} placeholder="Paste a syllabus, training plan, checklist, or short goal." />
           <input name="instruction" placeholder="Name it or add direction, e.g. 8 week 5K plan" />
           <div className="segmented" role="group">
@@ -574,7 +610,7 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
         </div>
         {draft.tasks.map((task, index) => (
           <div className="preview-row" key={`${task.title}-${index}`}>
-            <span>Day {index + 1}</span>
+            <span>{draftDayLabel(task.cadence, index)}</span>
             <strong>{task.title}</strong>
             <span>{task.estimated_minutes}m</span>
           </div>
@@ -594,7 +630,7 @@ function ProgramView(props: {
   saveNote: (dayId: string, note: string) => void;
   repair: (dayId: string) => void;
 }): ReactElement {
-  const bounded = props.enrollments.filter((item) => !item.is_standing);
+  const bounded = props.enrollments.filter((item) => !item.is_standing && item.status !== "Abandoned");
   return (
     <section className="panel">
       <div className="panel-head">
@@ -611,11 +647,17 @@ function ProgramView(props: {
             {props.activeEnrollment.status === "Paused" ? "Resume" : "Pause"}
           </button>
           <button className="button subtle" type="button" onClick={() => props.patchEnrollment(props.activeEnrollment?.id ?? "", "completed")}>Mark complete</button>
-          <button className="button danger" type="button" onClick={() => props.patchEnrollment(props.activeEnrollment?.id ?? "", "abandoned")}>Abandon</button>
+          <button className="button danger" type="button" onClick={() => props.patchEnrollment(props.activeEnrollment?.id ?? "", "abandoned")}>Delete program</button>
         </div>
       ) : null}
       <div className="list">
-        {bounded.map((enrollment) => <div className="list-row" key={enrollment.id}><strong>{enrollment.status}</strong><span>{enrollment.start_date}</span><span>{enrollment.timezone}</span></div>)}
+        {bounded.map((enrollment) => (
+          <div className="list-row" key={enrollment.id}>
+            <strong>{enrollment.status}</strong>
+            <span>{enrollment.start_date}</span>
+            <button className="button danger" type="button" onClick={() => props.patchEnrollment(enrollment.id, "abandoned")}>Delete</button>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -651,11 +693,18 @@ function StandingView(props: { standing: TodaySection | null; createStanding: (e
 
 function HeatmapView(props: { program: TodaySection | null; stats: StatsResponse | null; summary: CompletionSummary | null; loadStats: () => void }): ReactElement {
   const days = props.stats?.days ?? [];
+  const hasProgram = props.program !== null;
   return (
-    <section className="split">
+    <section className={hasProgram ? "split" : "single-column"}>
       <div className="panel">
-        <h2>{props.program ? props.program.title : "Heatmap"}</h2>
-        <HeatmapGrid days={days} fallbackSection={props.program} />
+        <div className="panel-head">
+          <div>
+            <h2>{props.program ? props.program.title : "Heatmap"}</h2>
+            {props.program ? <p>Hover a square to see completed tasks.</p> : null}
+          </div>
+          {props.program && !props.stats ? <button className="button primary" type="button" onClick={props.loadStats}>Load stats</button> : null}
+        </div>
+        <HeatmapGrid days={days} />
         {props.summary ? <p className="counter">{props.summary.payload.days_logged}/{props.summary.payload.days_total} days logged · longest {props.summary.payload.longest_streak}</p> : null}
         {props.summary ? (
           <div className="artifact">
@@ -665,13 +714,13 @@ function HeatmapView(props: { program: TodaySection | null; stats: StatsResponse
           </div>
         ) : null}
       </div>
-      <div className="panel">
+      {hasProgram ? <div className="panel">
         <h2>Task completion</h2>
         {props.stats ? props.stats.tasks.map((task) => {
           const rate = task.available_count === 0 ? 0 : Math.round((task.completed_count / task.available_count) * 100);
           return <div className="list-row" key={task.template_id}><strong>{task.title}</strong><span>{rate}%</span><span>{task.completed_count}/{task.available_count}</span></div>;
-        }) : <button className="button primary" type="button" onClick={props.loadStats}>Load stats</button>}
-      </div>
+        }) : <div className="empty compact-empty">Load stats to see task completion.</div>}
+      </div> : null}
     </section>
   );
 }
@@ -830,19 +879,34 @@ function MiniHeatmap(props: { section: TodaySection | null; changeView: (view: V
   );
 }
 
-function HeatmapGrid(props: { days: StatsResponse["days"]; fallbackSection: TodaySection | null }): ReactElement {
+function HeatmapGrid(props: { days: StatsResponse["days"] }): ReactElement {
   if (props.days.length === 0) {
-    return <MiniHeatmap section={props.fallbackSection} changeView={() => undefined} />;
+    return <BlankHeatmap />;
   }
   return (
     <>
       <div className="heatmap-shell">
         <div className="heatmap-weekdays"><span>Mon</span><span>Wed</span><span>Fri</span></div>
         <div className="heatmap full">
-          {props.days.map((day) => <span className={`cell ${statusClass(day.status, scoreFromDay(day))}`} title={`${day.local_date} · ${day.status}`} key={day.id} />)}
+          {props.days.map((day) => <span className={`cell ${statusClass(day.status, scoreFromDay(day))}`} title={`${day.local_date} · ${taskCountLabel(day.completed_tasks)} done`} key={day.id} />)}
         </div>
       </div>
       <div className="legend"><span>Missed</span><span>Low</span><span>Medium</span><span>High</span><span>Perfect</span></div>
+    </>
+  );
+}
+
+function BlankHeatmap(): ReactElement {
+  const cells = Array.from({ length: 56 }, (_, index) => index);
+  return (
+    <>
+      <div className="heatmap-shell">
+        <div className="heatmap-weekdays"><span>Mon</span><span>Wed</span><span>Fri</span></div>
+        <div className="heatmap full">
+          {cells.map((index) => <span className="cell blank" title="No tasks done" key={index} />)}
+        </div>
+      </div>
+      <div className="legend muted"><span>No activity yet</span></div>
     </>
   );
 }
@@ -859,22 +923,27 @@ function IntensityRadio(props: { value: Intensity; label: string }): ReactElemen
   return <label><input type="radio" name="intensity" value={props.value} defaultChecked={props.value === "standard"} />{props.label}</label>;
 }
 
-async function readUpload(event: ChangeEvent<HTMLInputElement>, extractFile: (file: File) => Promise<string>): Promise<void> {
+async function readUpload(
+  event: ChangeEvent<HTMLInputElement>,
+  extractFile: (file: File) => Promise<string>,
+  setUploadedText: (text: string) => void,
+  setUploadedFileName: (name: string | null) => void,
+  setUploadStatus: (status: string | null) => void
+): Promise<void> {
   const file = event.currentTarget.files?.[0];
   if (!file) {
     return;
   }
 
-  const target = document.getElementById("source-text");
-  if (!(target instanceof HTMLTextAreaElement)) {
-    return;
-  }
-
-  target.placeholder = `Extracting ${file.name}...`;
+  setUploadedFileName(file.name);
+  setUploadStatus("Reading document...");
   try {
-    target.value = await extractFile(file);
+    setUploadedText(await extractFile(file));
+    setUploadStatus("Document ready");
   } catch (error) {
-    target.placeholder = error instanceof Error ? error.message : "Could not extract that file.";
+    setUploadedText("");
+    setUploadedFileName(null);
+    setUploadStatus(error instanceof Error ? error.message : "Could not read that file.");
   } finally {
     event.currentTarget.value = "";
   }
@@ -979,6 +1048,10 @@ function scoreFromDay(day: StatsResponse["days"][number]): number {
   return Math.round((day.earned_points / day.available_points) * 100);
 }
 
+function taskCountLabel(count: number): string {
+  return `${count} task${count === 1 ? "" : "s"}`;
+}
+
 function initials(name: string): string {
   return name
     .split(" ")
@@ -1011,6 +1084,13 @@ function durationBucket(value: string): "five" | "ten" | "fifteen" | "thirty" {
     return value;
   }
   return "five";
+}
+
+function draftDayLabel(cadence: Cadence, index: number): string {
+  if (cadence.type === "once") {
+    return `Day ${cadence.day_offset + 1}`;
+  }
+  return `Task ${index + 1}`;
 }
 
 function storedProfileName(): string {

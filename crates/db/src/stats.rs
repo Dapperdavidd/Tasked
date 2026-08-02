@@ -1,4 +1,5 @@
 use chrono::NaiveDate;
+use sqlx::FromRow;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
@@ -91,4 +92,42 @@ pub async fn per_task_completion_rates(
     .bind(to)
     .fetch_all(&mut **tx)
     .await
+}
+
+pub async fn completed_task_counts_by_day(
+    tx: &mut Transaction<'_, Postgres>,
+    enrollment_id: Uuid,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Result<Vec<DayTaskCompletionCountRow>, sqlx::Error> {
+    sqlx::query_as::<_, DayTaskCompletionCountRow>(
+        r#"
+        select d.id as day_id,
+               count(ti.id) filter (
+                 where ti.completed_at is not null
+                   and ti.skipped_reason is null
+               ) as completed_count,
+               count(ti.id) filter (
+                 where ti.skipped_reason is null
+               ) as available_count
+        from days d
+        left join task_instances ti on ti.day_id = d.id
+        where d.enrollment_id = $1
+          and d.local_date >= $2
+          and d.local_date <= $3
+        group by d.id
+        "#,
+    )
+    .bind(enrollment_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&mut **tx)
+    .await
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct DayTaskCompletionCountRow {
+    pub day_id: Uuid,
+    pub completed_count: Option<i64>,
+    pub available_count: Option<i64>,
 }

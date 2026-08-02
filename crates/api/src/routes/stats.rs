@@ -1,6 +1,7 @@
 use actix_web::{get, web, HttpResponse};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracked_db::{rls, stats as stats_db};
 use uuid::Uuid;
 
@@ -23,6 +24,20 @@ pub async fn stats(
     rls::set_request_user(&mut tx, user_id.0).await?;
     let days = stats_db::days_for_enrollment_range(&mut tx, query.enrollment, query.from, query.to)
         .await?;
+    let day_counts =
+        stats_db::completed_task_counts_by_day(&mut tx, query.enrollment, query.from, query.to)
+            .await?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.day_id,
+                    (
+                        row.completed_count.unwrap_or_default(),
+                        row.available_count.unwrap_or_default(),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
     let tasks =
         stats_db::per_task_completion_rates(&mut tx, query.enrollment, query.from, query.to)
             .await?;
@@ -32,6 +47,14 @@ pub async fn stats(
         days: days
             .into_iter()
             .map(|day| DayStatsResponse {
+                completed_tasks: day_counts
+                    .get(&day.id)
+                    .map(|(completed, _)| *completed)
+                    .unwrap_or_default(),
+                available_tasks: day_counts
+                    .get(&day.id)
+                    .map(|(_, available)| *available)
+                    .unwrap_or_default(),
                 id: day.id,
                 local_date: day.local_date,
                 status: format!("{:?}", day.status),
@@ -64,6 +87,8 @@ struct DayStatsResponse {
     status: String,
     available_points: i32,
     earned_points: i32,
+    completed_tasks: i64,
+    available_tasks: i64,
 }
 
 #[derive(Serialize)]
