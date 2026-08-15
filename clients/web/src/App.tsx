@@ -12,6 +12,7 @@ import {
   type Enrollment,
   type IngestJob,
   type NotificationEvent,
+  type SessionResponse,
   type StatsResponse,
   type TaskInstance,
   type TodayResponse,
@@ -22,6 +23,16 @@ import type { Cadence } from "../../shared/src/types/Cadence";
 import type { Intensity } from "../../shared/src/types/Intensity";
 
 type Theme = "dark" | "light";
+type AuthStatus = "loading" | "authenticated" | "anonymous";
+
+type AuthUser = {
+  id: string;
+  displayName: string;
+  email: string | null;
+  timezone: string;
+  locale: string;
+  avatarUrl: string | null;
+};
 
 type AppState = {
   view: View;
@@ -56,13 +67,15 @@ const initialState: AppState = {
 export function App(): ReactElement {
   const [state, setState] = useState<AppState>(initialState);
   const [profileName, setProfileName] = useState(storedProfileName);
+  const [authUser, setAuthUser] = useState<AuthUser>(() => storedAuthUser(defaultSettings.userId));
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
+  const { user, status } = useAuth(authUser, state.settings.userId, authStatus);
   const [theme, setTheme] = useState<Theme>(storedTheme);
   const client = useMemo(() => new ApiClient(state.settings), [state.settings]);
   const program = state.today?.sections.find((section) => section.kind === "Program") ?? null;
   const standing = state.today?.sections.find((section) => section.kind === "Standing") ?? null;
   const activeEnrollment = program ? state.enrollments.find((enrollment) => enrollment.id === program.enrollment_id) ?? null : null;
   const [returnDismissedFor, setReturnDismissedFor] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const showReturn = state.today?.lapsed_days !== null && state.today?.lapsed_days !== undefined && returnDismissedFor !== state.today.local_date;
 
   useEffect(() => {
@@ -78,15 +91,20 @@ export function App(): ReactElement {
     if (state.settings.userId.trim()) {
       await run("Loaded today", async () => {
         try {
+          setAuthStatus("authenticated");
           return await loadPrimary(client);
         } catch {
           clearSessionSettings();
           const fallbackSettings = { apiBase: "", userId: "" };
           const fallbackClient = new ApiClient(fallbackSettings);
-          const session = await fallbackClient.createSession(undefined, profileName);
+          const session = await fallbackClient.createSession(deviceTimeZone(), profileName);
           const nextSettings = { apiBase: "", userId: session.user_id };
           saveSettings(nextSettings);
           saveProfileName(session.display_name);
+          const user = authUserFromSession(session, null);
+          saveAuthUser(user);
+          setAuthUser(user);
+          setAuthStatus(user.displayName.trim() ? "authenticated" : "anonymous");
           setProfileName(session.display_name);
           const nextClient = new ApiClient(nextSettings);
           const patch = await loadPrimary(nextClient);
@@ -97,10 +115,14 @@ export function App(): ReactElement {
     }
 
     await run("Session ready", async () => {
-      const session = await client.createSession(undefined, profileName);
+      const session = await client.createSession(deviceTimeZone(), profileName);
       const nextSettings = { ...state.settings, userId: session.user_id };
       saveSettings(nextSettings);
       saveProfileName(session.display_name);
+      const user = authUserFromSession(session, null);
+      saveAuthUser(user);
+      setAuthUser(user);
+      setAuthStatus(user.displayName.trim() ? "authenticated" : "anonymous");
       setProfileName(session.display_name);
       const nextClient = new ApiClient(nextSettings);
       const patch = await loadPrimary(nextClient);
@@ -164,7 +186,6 @@ export function App(): ReactElement {
   }
 
   async function changeView(view: View): Promise<void> {
-    setMenuOpen(false);
     setState((current) => ({ ...current, view, error: null }));
     if (view === "heatmap" && state.stats === null && program) {
       await loadStats(program);
@@ -231,7 +252,11 @@ export function App(): ReactElement {
       return;
     }
     await run("Program started", async () => {
-      await client.confirmDraft(job.job_id, new Date().toISOString().slice(0, 10), "Africa/Lagos", 0);
+      if (!state.today?.local_date) {
+        throw new Error("Today is not loaded yet. Refresh and try again.");
+      }
+      const timezone = activeEnrollment?.timezone ?? authUser.timezone;
+      await client.confirmDraft(job.job_id, state.today.local_date, timezone, activeEnrollment?.day_boundary_hour ?? 0);
       const { today, enrollments } = await loadStartedProgram(client);
       return { view: "today", today, enrollments };
     });
@@ -355,10 +380,14 @@ export function App(): ReactElement {
   function saveProfile(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const name = String(form.get("displayName") ?? "").trim() || "Dapper";
+    const name = String(form.get("displayName") ?? "").trim();
     const nextTheme = form.get("theme") === "light" ? "light" : "dark";
     saveProfileName(name);
     setProfileName(name);
+    const nextUser = { ...authUser, displayName: name };
+    saveAuthUser(nextUser);
+    setAuthUser(nextUser);
+    setAuthStatus(name ? "authenticated" : "anonymous");
     setTheme(nextTheme);
     setState((current) => ({ ...current, status: "Profile saved", error: null }));
   }
@@ -367,19 +396,20 @@ export function App(): ReactElement {
     <>
       <Sidebar
         state={state}
-        menuOpen={menuOpen}
-        profileName={profileName}
+        program={program}
+        standing={standing}
+        authUser={user}
         changeView={(view) => void changeView(view)}
-        toggleMenu={() => setMenuOpen((open) => !open)}
       />
       <main className="main">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{formatLongDate(state.today?.local_date)}</p>
-            <h1>{pageTitle(state.view)}</h1>
+            <h1>{state.view === "today" ? greeting(user, state.today?.local_date) : pageTitle(state.view)}</h1>
+            <p className="eyebrow">{status === "loading" ? "Loading session" : formatLongDate(state.today?.local_date, user.locale)}</p>
           </div>
           <div className="actions">
-            <button className="profile-button" type="button" onClick={() => void changeView("profile")} title="Profile">{initials(profileName)}</button>
+            <button className="icon-button" type="button" onClick={() => void refreshPrimary()} title="Refresh">↻</button>
+            <button className="profile-button" type="button" onClick={() => void changeView("profile")} title="Profile">{initials(user.displayName)}</button>
           </div>
         </header>
         {state.error?.view === state.view ? <div className="banner error">{state.error.message}</div> : null}
@@ -416,38 +446,81 @@ export function App(): ReactElement {
         {state.view === "standing" ? <StandingView standing={standing} createStanding={(event) => void createStanding(event)} toggleTask={(task) => void toggleTask(task)} /> : null}
         {state.view === "heatmap" ? <HeatmapView program={program} stats={state.stats} summary={state.summary} loadStats={() => void loadStats()} /> : null}
         {state.view === "cohort" ? <CohortView activeEnrollment={activeEnrollment} presence={state.cohortPresence} inviteToken={state.inviteToken} createCohort={(event) => void createCohort(event)} createInvite={() => void createInvite()} joinCohort={(event) => void joinCohort(event)} /> : null}
-        {state.view === "profile" ? <ProfileView settings={state.settings} profileName={profileName} theme={theme} saveProfile={saveProfile} saveAdvanced={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} manageTasks={() => void changeView("standing")} /> : null}
+        {state.view === "reports" ? <ReportsView program={program} summary={state.summary} loadStats={() => void loadStats()} /> : null}
+        {state.view === "profile" ? <ProfileView settings={state.settings} user={user} status={status} profileName={profileName} theme={theme} saveProfile={saveProfile} saveAdvanced={saveClientSettings} testNotification={() => void testNotification()} refresh={() => void refreshPrimary()} manageTasks={() => void changeView("standing")} /> : null}
       </main>
+      <MobileNav state={state} profileName={profileName} changeView={(view) => void changeView(view)} />
     </>
   );
 }
 
-function Sidebar(props: { state: AppState; menuOpen: boolean; profileName: string; changeView: (view: View) => void; toggleMenu: () => void }): ReactElement {
+function Sidebar(props: { state: AppState; program: TodaySection | null; standing: TodaySection | null; authUser: AuthUser; changeView: (view: View) => void }): ReactElement {
   return (
-    <aside className={`sidebar ${props.menuOpen ? "open" : ""}`}>
-      <button className="menu-trigger" type="button" onClick={props.toggleMenu} aria-expanded={props.menuOpen} aria-label="Open navigation">
-        <span className="logo">✓</span>
-      </button>
+    <aside className="sidebar">
       <div className="brand"><span className="logo">✓</span><span>TRACKED</span></div>
       <nav className="nav">
-        {navItems.map((item) => (
+        {desktopNavItems.map((item) => (
           <button key={item.view} className={`nav-item ${props.state.view === item.view ? "active" : ""}`} type="button" onClick={() => props.changeView(item.view)}>
-            <span>{item.view === "profile" ? initials(props.profileName) : item.icon}</span>{item.label}
+            <span>{item.icon}</span>{item.label}
           </button>
         ))}
       </nav>
+      <div className="sidebar-section">
+        <p>Active program</p>
+        {props.program ? <SidebarProgramSummary section={props.program} /> : <span>No active program</span>}
+      </div>
+      <div className="sidebar-section">
+        <p>Standing list <strong>{props.standing ? `${props.standing.tasks.length} / 5 used` : "0 / 5 used"}</strong></p>
+        {props.standing && props.standing.tasks.length > 0 ? props.standing.tasks.slice(0, 5).map((task) => <span key={task.id}>{task.title}</span>) : <span>Empty standing list</span>}
+      </div>
+      <button className="sidebar-user" type="button" onClick={() => props.changeView("profile")}>
+        <span className="profile-avatar small">{initials(props.authUser.displayName)}</span>
+        <span><strong>{displayName(props.authUser)}</strong><em>{props.authUser.email ?? props.authUser.timezone}</em></span>
+      </button>
     </aside>
   );
 }
 
-const navItems: Array<{ view: View; label: string; icon: string }> = [
-  { view: "today", label: "Today", icon: "□" },
-  { view: "ingest", label: "Ingest", icon: "+" },
-  { view: "programs", label: "Program", icon: "▤" },
-  { view: "standing", label: "Standing", icon: "○" },
-  { view: "heatmap", label: "Heatmap", icon: "▦" },
-  { view: "cohort", label: "Cohort", icon: "◇" },
-  { view: "profile", label: "Profile", icon: "●" }
+function SidebarProgramSummary(props: { section: TodaySection }): ReactElement {
+  const completed = props.section.tasks.filter(done).length;
+  const total = Math.max(props.section.tasks.length, 1);
+  return (
+    <article className="sidebar-program">
+      <strong>{props.section.title}</strong>
+      <span>{progressLabel(props.section)}</span>
+      <progress value={completed} max={total} />
+      <span>{Math.round((completed / total) * 100)}%</span>
+    </article>
+  );
+}
+
+function MobileNav(props: { state: AppState; profileName: string; changeView: (view: View) => void }): ReactElement {
+  return (
+    <nav className="mobile-nav" aria-label="Mobile navigation">
+      {mobileNavItems.map((item) => (
+        <button key={item.view} className={props.state.view === item.view ? "active" : ""} type="button" onClick={() => props.changeView(item.view)}>
+          <span>{item.view === "profile" ? initials(props.profileName) : item.icon}</span>{item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+const desktopNavItems: Array<{ view: View; label: string; icon: string }> = [
+  { view: "today", label: "Today", icon: "⌂" },
+  { view: "programs", label: "Program", icon: "▣" },
+  { view: "heatmap", label: "Heatmap", icon: "⌘" },
+  { view: "cohort", label: "Cohort", icon: "♧" },
+  { view: "reports", label: "Reports", icon: "▧" },
+  { view: "profile", label: "Settings", icon: "⚙" }
+];
+
+const mobileNavItems: Array<{ view: View; label: string; icon: string }> = [
+  { view: "today", label: "Today", icon: "⌂" },
+  { view: "programs", label: "Program", icon: "▣" },
+  { view: "heatmap", label: "Heatmap", icon: "⌘" },
+  { view: "cohort", label: "Cohort", icon: "♧" },
+  { view: "profile", label: "You", icon: "○" }
 ];
 
 function TodayView(props: {
@@ -589,7 +662,7 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
           ) : null}
           {uploadStatus ? <p className="job-status">{uploadStatus}</p> : null}
           <textarea id="source-text" name="source" rows={7} placeholder="Paste a syllabus, training plan, checklist, or short goal." />
-          <input name="instruction" placeholder="Name it or add direction, e.g. 8 week 5K plan" />
+          <input name="instruction" placeholder="Name it or add direction" />
           <div className="segmented" role="group">
             <IntensityRadio value="light" label="Light" />
             <IntensityRadio value="standard" label="Standard" />
@@ -760,7 +833,7 @@ function CohortView(props: {
           </div>
         ) : (
           <form className="form" onSubmit={props.createCohort}>
-            <input name="name" placeholder="Cohort name, e.g. 5K Crew" />
+            <input name="name" placeholder="Cohort name" />
             <button className="button primary" type="submit">Create cohort</button>
           </form>
         )}
@@ -779,6 +852,8 @@ function CohortView(props: {
 
 function ProfileView(props: {
   settings: ClientSettings;
+  user: AuthUser;
+  status: AuthStatus;
   profileName: string;
   theme: Theme;
   saveProfile: (event: FormEvent<HTMLFormElement>) => void;
@@ -791,10 +866,10 @@ function ProfileView(props: {
     <section className="profile-grid">
       <div className="panel profile-card">
         <div className="profile-hero">
-          <span className="profile-avatar">{initials(props.profileName)}</span>
+          <span className="profile-avatar">{initials(props.user.displayName)}</span>
           <div>
-            <h2>{props.profileName}</h2>
-            <p>Google profile will connect here later.</p>
+            <h2>{displayName(props.user)}</h2>
+            <p>{props.status === "authenticated" ? props.user.timezone : "Connect authentication to sync a full profile."}</p>
           </div>
         </div>
         <form className="form" onSubmit={props.saveProfile}>
@@ -823,6 +898,56 @@ function ProfileView(props: {
           <button className="button subtle" type="submit">Save advanced setting</button>
         </form>
       </details>
+    </section>
+  );
+}
+
+function ReportsView(props: { program: TodaySection | null; summary: CompletionSummary | null; loadStats: () => void }): ReactElement {
+  if (!props.program) {
+    return (
+      <section className="panel">
+        <div className="empty">
+          <strong>No active program.</strong>
+          <span>Reports appear after a bounded program has activity.</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (!props.summary) {
+    return (
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Reports</h2>
+            <p>{props.program.title}</p>
+          </div>
+          <button className="button primary" type="button" onClick={props.loadStats}>Load report</button>
+        </div>
+        <div className="empty compact-empty">Completion report data is not loaded yet.</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div>
+          <h2>{props.summary.payload.title}</h2>
+          <p>{formatProgramDateRange(props.summary.payload.started_on, props.summary.payload.finished_on)}</p>
+        </div>
+      </div>
+      <div className="artifact">
+        <Metric label="Completion" value={props.summary.payload.completion_rate === null ? "0%" : `${Math.round(props.summary.payload.completion_rate)}%`} sub="finalised days" />
+        <Metric label="Days logged" value={String(props.summary.payload.days_logged)} sub={`${props.summary.payload.days_total} total`} />
+        <Metric label="Longest streak" value={String(props.summary.payload.longest_streak)} sub="days" />
+        <Metric label="Tasks" value={String(props.summary.payload.tasks_completed)} sub="completed" />
+      </div>
+      {props.summary.payload.notes.length > 0 ? (
+        <div className="list">
+          {props.summary.payload.notes.map((note) => <div className="list-row" key={note.local_date}><strong>{formatShortDate(note.local_date)}</strong><span>{note.note}</span></div>)}
+        </div>
+      ) : <div className="empty compact-empty">No notes were recorded for this report.</div>}
     </section>
   );
 }
@@ -860,8 +985,6 @@ function MiniHeatmap(props: { section: TodaySection | null; changeView: (view: V
       </div>
     );
   }
-  const score = props.section ? dayScore(props.section) : 0;
-  const cells = Array.from({ length: 56 }, (_, index) => index === 11 ? score : 0);
   return (
     <div className="panel compact">
       <div className="panel-head">
@@ -871,10 +994,7 @@ function MiniHeatmap(props: { section: TodaySection | null; changeView: (view: V
         </div>
         <button className="button subtle" type="button" onClick={() => props.changeView("heatmap")}>View</button>
       </div>
-      <div className="heatmap">
-        {cells.map((value, index) => <span className={`cell ${heatClass(value)}`} key={index} />)}
-      </div>
-      <div className="legend"><span>Missed</span><span>Low</span><span>Medium</span><span>High</span><span>Perfect</span></div>
+      <div className="empty compact-empty">Open Heatmap to load day records.</div>
     </div>
   );
 }
@@ -973,8 +1093,10 @@ function pageTitle(view: View): string {
       return "Heatmap";
     case "cohort":
       return "Cohort";
+    case "reports":
+      return "Reports";
     case "profile":
-      return "Profile";
+      return "Settings";
   }
 }
 
@@ -1052,6 +1174,72 @@ function taskCountLabel(count: number): string {
   return `${count} task${count === 1 ? "" : "s"}`;
 }
 
+function useAuth(user: AuthUser, sessionId: string, status: AuthStatus): { user: AuthUser; session: { userId: string } | null; status: AuthStatus } {
+  return {
+    user,
+    session: sessionId.trim() ? { userId: sessionId } : null,
+    status
+  };
+}
+
+function authUserFromSession(session: SessionResponse, email: string | null): AuthUser {
+  return {
+    id: session.user_id,
+    displayName: session.display_name,
+    email,
+    timezone: session.timezone,
+    locale: navigator.language || "en",
+    avatarUrl: null
+  };
+}
+
+function storedAuthUser(userId: string): AuthUser {
+  const raw = localStorage.getItem("tracked.authUser");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as AuthUser;
+      return {
+        id: parsed.id || userId,
+        displayName: parsed.displayName || "",
+        email: parsed.email ?? null,
+        timezone: parsed.timezone || deviceTimeZone(),
+        locale: parsed.locale || navigator.language || "en",
+        avatarUrl: parsed.avatarUrl ?? null
+      };
+    } catch {
+      localStorage.removeItem("tracked.authUser");
+    }
+  }
+  return {
+    id: userId,
+    displayName: storedProfileName(),
+    email: null,
+    timezone: deviceTimeZone(),
+    locale: navigator.language || "en",
+    avatarUrl: null
+  };
+}
+
+function saveAuthUser(user: AuthUser): void {
+  localStorage.setItem("tracked.authUser", JSON.stringify(user));
+}
+
+function deviceTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function displayName(user: AuthUser): string {
+  return user.displayName.trim() || "Profile";
+}
+
+function greeting(user: AuthUser, localDate: string | undefined): string {
+  const hour = new Intl.DateTimeFormat("en", { hour: "numeric", hour12: false, timeZone: user.timezone }).format(new Date());
+  const numericHour = Number(hour);
+  const label = numericHour < 12 ? "Good morning" : numericHour < 18 ? "Good afternoon" : "Good evening";
+  const name = user.displayName.trim();
+  return name ? `${label}, ${name}` : label;
+}
+
 function initials(name: string): string {
   return name
     .split(" ")
@@ -1059,7 +1247,7 @@ function initials(name: string): string {
     .slice(0, 2)
     .map((part) => part[0] ?? "")
     .join("")
-    .toUpperCase() || "M";
+    .toUpperCase() || "•";
 }
 
 function asIntensity(value: FormDataEntryValue | null): Intensity {
@@ -1094,7 +1282,7 @@ function draftDayLabel(cadence: Cadence, index: number): string {
 }
 
 function storedProfileName(): string {
-  return localStorage.getItem("tracked.profileName") ?? "Dapper";
+  return localStorage.getItem("tracked.profileName") ?? "";
 }
 
 function saveProfileName(name: string): void {
@@ -1111,11 +1299,19 @@ function addDays(date: string, days: number): string {
   return next.toISOString().slice(0, 10);
 }
 
-function formatLongDate(date: string | undefined): string {
+function formatLongDate(date: string | undefined, locale = "en"): string {
   if (!date) {
     return "Not loaded";
   }
-  return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+  return new Intl.DateTimeFormat(locale, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function formatShortDate(date: string, locale = "en"): string {
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(`${date}T00:00:00Z`));
+}
+
+function formatProgramDateRange(start: string, end: string, locale = "en"): string {
+  return `${formatShortDate(start, locale)} - ${formatShortDate(end, locale)}`;
 }
 
 function delay(ms: number): Promise<void> {

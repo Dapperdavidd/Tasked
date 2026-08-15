@@ -30,12 +30,12 @@ pub async fn create_session(
         .timezone
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "Africa/Lagos".to_owned());
+        .unwrap_or_else(|| "UTC".to_owned());
     let display_name = body
         .display_name
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "Dapper".to_owned());
+        .unwrap_or_default();
     let email = format!("anon-{user_id}@tracked.local");
 
     sqlx::query(

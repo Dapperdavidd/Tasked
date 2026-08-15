@@ -43,3 +43,27 @@ Explicit non-goals:
 - Routing standing tasks through ingestion.
 
 The full user-supplied PRD text should be treated as authoritative for detailed acceptance criteria until docs are expanded.
+
+## Development seed data
+
+Development seed data may be provided for the mock server, but it must never be embedded directly in production components.
+
+Seed multiple scenarios:
+
+- New user with no active program
+- Active bounded program with standing tasks
+- User with an empty standing list
+- Fully completed day
+- Partial day
+- Offline mutations pending
+- Repairable missed day
+- Rest day
+- Frozen day
+- Completed program
+- Lapsed user
+- Active cohort
+- Cohort at capacity
+- Ingestion failure
+- Standing-list cap reached
+
+Allow developers to switch between scenarios from a development-only menu.
