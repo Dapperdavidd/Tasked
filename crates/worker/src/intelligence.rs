@@ -10,6 +10,8 @@ use tracked_ingest::{generate, GeneratedProgram, Intensity, ProgramKind};
 
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL: &str = "gpt-5-mini";
+const OLLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/api/chat";
+const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:7b";
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
@@ -24,13 +26,15 @@ pub enum IntelligenceError {
 }
 
 pub fn configured() -> bool {
-    std::env::var("OPENAI_API_KEY")
-        .ok()
-        .is_some_and(|key| !key.trim().is_empty())
+    provider() != "deterministic"
 }
 
 pub fn deterministic_mode() -> bool {
-    std::env::var("TASKED_AI_PROVIDER").as_deref() == Ok("deterministic")
+    provider() == "deterministic"
+}
+
+fn provider() -> String {
+    std::env::var("TASKED_AI_PROVIDER").unwrap_or_else(|_| "ollama".to_owned())
 }
 
 pub async fn generate_program(
@@ -40,29 +44,24 @@ pub async fn generate_program(
     intensity: Intensity,
     duration_hint: Option<u16>,
 ) -> Result<GeneratedProgram, IntelligenceError> {
+    if provider() == "ollama" {
+        return generate_with_ollama(source, instruction, kind, intensity, duration_hint).await;
+    }
+
+    generate_with_openai(source, instruction, kind, intensity, duration_hint).await
+}
+
+async fn generate_with_openai(
+    source: &str,
+    instruction: Option<&str>,
+    kind: ProgramKind,
+    intensity: Intensity,
+    duration_hint: Option<u16>,
+) -> Result<GeneratedProgram, IntelligenceError> {
     let key = std::env::var("OPENAI_API_KEY").map_err(|_| IntelligenceError::MissingOutput)?;
     let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
-    let cap = intensity.daily_cap_minutes();
-    let schema = generate::response_schema();
-    let input = format!(
-        "User direction: {}\nProgram shape: {:?}\nDaily capacity: {} minutes\nDuration hint: {:?}\n\nSOURCE CONTEXT:\n{}",
-        instruction.unwrap_or("No extra direction"),
-        kind,
-        cap,
-        duration_hint,
-        source.chars().take(120_000).collect::<String>()
-    );
-    let instructions = r#"
-You are Tasked's product intelligence and planning engine. Turn source context into a realistic execution system, not a copied checklist.
-
-Reason over the domain before writing tasks. Infer the user's target outcome, identify the prerequisite progression, and use the source as evidence. Preserve useful source wording in descriptions when it matters, but do not mirror day numbers or headings literally.
-
-Every task must be a small focused-session action that starts with a concrete verb. Replace topics such as “learn ownership” with actions such as reading the relevant section, writing a specific example, fixing a specific failure, solving an exercise, building a small artifact, or passing a check. Every task description must state why it matters, what to do, and how completion will be verified. Prefer the smallest set of actions that advances the goal.
-
-Use the requested duration and capacity. Create meaningful progression across multiple days. Respect prerequisites: foundations before dependent concepts, practice before projects, and review/checks after application. Do not invent URLs or claim research you did not perform. If the source names a resource, retain that source reference in the task description.
-
-Return only the requested structured object. Do not put markdown or commentary outside the schema.
-"#;
+    let (instructions, input, schema) =
+        request_parts(source, instruction, kind, intensity, duration_hint);
     let body = json!({
         "model": model,
         "instructions": instructions,
@@ -120,13 +119,90 @@ Return only the requested structured object. Do not put markdown or commentary o
     generate::parse(&raw).map_err(|error| IntelligenceError::InvalidPlan(error.to_string()))
 }
 
+async fn generate_with_ollama(
+    source: &str,
+    instruction: Option<&str>,
+    kind: ProgramKind,
+    intensity: Intensity,
+    duration_hint: Option<u16>,
+) -> Result<GeneratedProgram, IntelligenceError> {
+    let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| DEFAULT_OLLAMA_MODEL.to_owned());
+    let (instructions, input, schema) =
+        request_parts(source, instruction, kind, intensity, duration_hint);
+    let body = json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": instructions },
+            { "role": "user", "content": input }
+        ],
+        "stream": false,
+        "format": schema,
+        "options": { "temperature": 0 }
+    });
+    let response = reqwest::Client::new()
+        .post(std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| OLLAMA_CHAT_URL.to_owned()))
+        .json(&body)
+        .send()
+        .await?;
+    let status = response.status();
+    let payload: Value = response.json().await?;
+    if !status.is_success() {
+        return Err(IntelligenceError::Response {
+            status,
+            body: payload
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Ollama request failed")
+                .to_owned(),
+        });
+    }
+    let raw = payload
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .ok_or(IntelligenceError::MissingOutput)?;
+    generate::parse(raw).map_err(|error| IntelligenceError::InvalidPlan(error.to_string()))
+}
+
+fn request_parts(
+    source: &str,
+    instruction: Option<&str>,
+    kind: ProgramKind,
+    intensity: Intensity,
+    duration_hint: Option<u16>,
+) -> (String, String, Value) {
+    let cap = intensity.daily_cap_minutes();
+    let schema = generate::response_schema();
+    let input = format!(
+        "User direction: {}\nProgram shape: {:?}\nDaily capacity: {} minutes\nDuration hint: {:?}\n\nSOURCE CONTEXT:\n{}",
+        instruction.unwrap_or("No extra direction"),
+        kind,
+        cap,
+        duration_hint,
+        source.chars().take(120_000).collect::<String>()
+    );
+    let instructions = r#"
+You are Tasked's product intelligence and planning engine. Turn source context into a realistic execution system, not a copied checklist.
+
+Reason over the domain before writing tasks. Infer the user's target outcome, identify the prerequisite progression, and use the source as evidence. Preserve useful source wording in descriptions when it matters, but do not mirror day numbers or headings literally.
+
+Every task must be a small focused-session action that starts with a concrete verb. Replace topics such as “learn ownership” with actions such as reading the relevant section, writing a specific example, fixing a specific failure, solving an exercise, building a small artifact, or passing a check. Every task description must state why it matters, what to do, and how completion will be verified. Prefer the smallest set of actions that advances the goal.
+
+Use the requested duration and capacity. Create meaningful progression across multiple days. Respect prerequisites: foundations before dependent concepts, practice before projects, and review/checks after application. Do not invent URLs or claim research you did not perform. If the source names a resource, retain that source reference in the task description.
+
+Return only the requested structured object. Do not put markdown or commentary outside the schema.
+"#;
+    (instructions.to_owned(), input, schema)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn provider_is_disabled_without_a_key() {
-        std::env::remove_var("OPENAI_API_KEY");
+    fn deterministic_mode_is_explicit() {
+        std::env::set_var("TASKED_AI_PROVIDER", "deterministic");
         assert!(!configured());
+        std::env::remove_var("TASKED_AI_PROVIDER");
     }
 }
