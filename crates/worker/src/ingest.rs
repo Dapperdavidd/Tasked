@@ -143,7 +143,9 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
     // for validation and the final draft write.
     tx.commit().await?;
     let intensity = intensity_from_db(&source.intensity);
-    let generated = if intelligence::configured() {
+    let generated = if intelligence::configured()
+        && !(intelligence::local_mode() && classification.suggested_duration_days.unwrap_or(7) > 7)
+    {
         match intelligence::generate_program(
             &normalised.text,
             source.instruction.as_deref(),
@@ -154,6 +156,20 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
         .await
         {
             Ok(program) => program,
+            Err(error) if intelligence::local_mode() => {
+                eprintln!(
+                    "local planning fallback for {}: {error}",
+                    payload.ingestion_job_id
+                );
+                planner::compile(
+                    &normalised.text,
+                    source.instruction.as_deref(),
+                    classification.kind,
+                    classification.confidence,
+                    classification.suggested_duration_days,
+                    intensity,
+                )
+            }
             Err(error) => {
                 let mut failure_tx = pool.begin().await?;
                 fail_ingestion(

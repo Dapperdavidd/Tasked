@@ -36,6 +36,10 @@ pub fn deterministic_mode() -> bool {
     provider() == "deterministic"
 }
 
+pub fn local_mode() -> bool {
+    provider() == "ollama"
+}
+
 fn provider() -> String {
     std::env::var("TASKED_AI_PROVIDER").unwrap_or_else(|_| "ollama".to_owned())
 }
