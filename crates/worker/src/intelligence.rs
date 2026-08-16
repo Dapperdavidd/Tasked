@@ -12,8 +12,9 @@ use tracked_ingest::{generate, GeneratedProgram, Intensity, ProgramKind};
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL: &str = "gpt-5-mini";
 const OLLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/api/chat";
-const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:3b";
+const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:1.5b";
 const DEFAULT_OLLAMA_TIMEOUT_SECONDS: u64 = 180;
+const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS: u64 = 420;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
@@ -140,7 +141,13 @@ async fn generate_with_ollama(
         ],
         "stream": false,
         "format": schema,
-        "options": { "temperature": 0 }
+        "options": {
+            "temperature": 0,
+            "num_predict": std::env::var("OLLAMA_MAX_OUTPUT_TOKENS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS)
+        }
     });
     let timeout = std::env::var("OLLAMA_TIMEOUT_SECONDS")
         .ok()
@@ -229,8 +236,8 @@ fn ollama_schema() -> Value {
                     "type": "object",
                     "properties": {
                         "title": { "type": "string" },
-                        "description": { "type": ["string", "null"] },
-                        "category": { "type": ["string", "null"] },
+                        "description": { "type": "string" },
+                        "category": { "type": "string" },
                         "difficulty": { "type": "integer" },
                         "estimated_minutes": { "type": "integer" },
                         "cadence": {
@@ -241,7 +248,7 @@ fn ollama_schema() -> Value {
                                 "count": { "type": "integer" },
                                 "day_offset": { "type": "integer" }
                             },
-                            "required": ["type"]
+                            "required": ["type", "day_offset"]
                         }
                     },
                     "required": ["title", "description", "category", "difficulty", "estimated_minutes", "cadence"]
