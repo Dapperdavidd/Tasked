@@ -138,6 +138,10 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
         None,
     )
     .await?;
+    // Do not hold a database transaction open while a local model is
+    // generating. Persist the visible stage first, then reopen a transaction
+    // for validation and the final draft write.
+    tx.commit().await?;
     let intensity = intensity_from_db(&source.intensity);
     let generated = if intelligence::configured() {
         match intelligence::generate_program(
@@ -151,15 +155,16 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
         {
             Ok(program) => program,
             Err(error) => {
+                let mut failure_tx = pool.begin().await?;
                 fail_ingestion(
-                    &mut tx,
+                    &mut failure_tx,
                     payload.ingestion_job_id,
                     job,
                     "ai_generation_failed",
                     &error.to_string(),
                 )
                 .await?;
-                tx.commit().await?;
+                failure_tx.commit().await?;
                 return Ok(());
             }
         }
@@ -171,17 +176,20 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
             intensity,
         )
     } else {
+        let mut failure_tx = pool.begin().await?;
         fail_ingestion(
-            &mut tx,
+            &mut failure_tx,
             payload.ingestion_job_id,
             job,
             "ai_not_configured",
             "Set OPENAI_API_KEY or explicitly choose TASKED_AI_PROVIDER=deterministic",
         )
         .await?;
-        tx.commit().await?;
+        failure_tx.commit().await?;
         return Ok(());
     };
+
+    let mut tx = pool.begin().await?;
 
     let validated = match generate::validate(generated) {
         Ok(validated) => validated,
