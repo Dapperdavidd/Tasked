@@ -191,6 +191,7 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
 
     let mut tx = pool.begin().await?;
 
+    let generated = repair_sequential_cadence(generated);
     let validated = match generate::validate(generated) {
         Ok(validated) => validated,
         Err(error) => {
@@ -255,6 +256,24 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
     tx.commit().await?;
 
     Ok(())
+}
+
+/// Small local models often choose `daily` because it is an easy valid
+/// cadence, even when the classifier identified a sequential curriculum or
+/// project. Repair that semantic mismatch deterministically instead of
+/// creating three copies of every task on every day.
+fn repair_sequential_cadence(mut program: GeneratedProgram) -> GeneratedProgram {
+    if matches!(program.kind, ProgramKind::Curriculum | ProgramKind::Project) {
+        let last_day = u32::from(program.duration_days.saturating_sub(1));
+        for (index, task) in program.tasks.iter_mut().enumerate() {
+            if matches!(task.cadence, tracked_core::cadence::Cadence::Daily) {
+                task.cadence = tracked_core::cadence::Cadence::Once {
+                    day_offset: (index as u32).min(last_day),
+                };
+            }
+        }
+    }
+    program
 }
 
 async fn claim_ingest_job(
