@@ -18,13 +18,13 @@ const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS: u64 = 700;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
-    #[error("OpenAI request failed: {0}")]
+    #[error("provider request failed: {0}")]
     Request(#[from] reqwest::Error),
-    #[error("OpenAI returned {status}: {body}")]
+    #[error("provider returned {status}: {body}")]
     Response { status: StatusCode, body: String },
-    #[error("OpenAI response did not contain structured plan output")]
+    #[error("provider response did not contain structured plan output")]
     MissingOutput,
-    #[error("OpenAI plan was invalid: {0}")]
+    #[error("provider plan was invalid: {0}")]
     InvalidPlan(String),
 }
 
@@ -63,9 +63,8 @@ async fn generate_with_openai(
 ) -> Result<GeneratedProgram, IntelligenceError> {
     let key = std::env::var("OPENAI_API_KEY").map_err(|_| IntelligenceError::MissingOutput)?;
     let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
-    let (instructions, input, _) =
-        request_parts(source, instruction, kind, intensity, duration_hint);
-    let schema = ollama_schema();
+    let (instructions, input) = request_parts(source, instruction, kind, intensity, duration_hint);
+    let schema = generate::response_schema();
     let body = json!({
         "model": model,
         "instructions": instructions,
@@ -131,8 +130,8 @@ async fn generate_with_ollama(
     duration_hint: Option<u16>,
 ) -> Result<GeneratedProgram, IntelligenceError> {
     let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| DEFAULT_OLLAMA_MODEL.to_owned());
-    let (instructions, input, schema) =
-        request_parts(source, instruction, kind, intensity, duration_hint);
+    let (instructions, input) = request_parts(source, instruction, kind, intensity, duration_hint);
+    let schema = ollama_schema();
     let body = json!({
         "model": model,
         "messages": [
@@ -141,6 +140,7 @@ async fn generate_with_ollama(
         ],
         "stream": false,
         "format": schema,
+        "keep_alive": "10m",
         "options": {
             "temperature": 0,
             "num_predict": std::env::var("OLLAMA_MAX_OUTPUT_TOKENS")
@@ -188,9 +188,8 @@ fn request_parts(
     kind: ProgramKind,
     intensity: Intensity,
     duration_hint: Option<u16>,
-) -> (String, String, Value) {
+) -> (String, String) {
     let cap = intensity.daily_cap_minutes();
-    let schema = generate::response_schema();
     let input = format!(
         "User direction: {}\nProgram shape: {:?}\nDaily capacity: {} minutes\nDuration hint: {:?}\n\nSOURCE CONTEXT:\n{}",
         instruction.unwrap_or("No extra direction"),
@@ -214,7 +213,7 @@ Keep the response compact: generate no more than 2 tasks per day of the plan, ke
 
 Return only the requested structured object. Do not put markdown or commentary outside the schema.
 "#;
-    (instructions.to_owned(), input, schema)
+    (instructions.to_owned(), input)
 }
 
 /// Ollama's structured decoder performs better with a compact schema than with
@@ -270,5 +269,16 @@ mod tests {
         std::env::set_var("TASKED_AI_PROVIDER", "deterministic");
         assert!(!configured());
         std::env::remove_var("TASKED_AI_PROVIDER");
+    }
+
+    #[test]
+    fn local_schema_is_bounded_for_small_models() {
+        let schema = ollama_schema();
+        assert_eq!(schema["properties"]["tasks"]["maxItems"], 6);
+        assert_eq!(schema["properties"]["warnings"]["maxItems"], 0);
+        assert_eq!(
+            schema["properties"]["tasks"]["items"]["properties"]["description"]["maxLength"],
+            160
+        );
     }
 }
