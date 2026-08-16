@@ -1,3 +1,4 @@
+use crate::intelligence;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 use tracked_ingest::{
@@ -137,12 +138,50 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
         None,
     )
     .await?;
-    let generated = generate_program(
-        &normalised.text,
-        source.instruction.as_deref(),
-        &classification,
-        intensity_from_db(&source.intensity),
-    );
+    let intensity = intensity_from_db(&source.intensity);
+    let generated = if intelligence::configured() {
+        match intelligence::generate_program(
+            &normalised.text,
+            source.instruction.as_deref(),
+            classification.kind,
+            intensity,
+            classification.suggested_duration_days,
+        )
+        .await
+        {
+            Ok(program) => program,
+            Err(error) => {
+                fail_ingestion(
+                    &mut tx,
+                    payload.ingestion_job_id,
+                    job,
+                    "ai_generation_failed",
+                    &error.to_string(),
+                )
+                .await?;
+                tx.commit().await?;
+                return Ok(());
+            }
+        }
+    } else if intelligence::deterministic_mode() {
+        generate_program(
+            &normalised.text,
+            source.instruction.as_deref(),
+            &classification,
+            intensity,
+        )
+    } else {
+        fail_ingestion(
+            &mut tx,
+            payload.ingestion_job_id,
+            job,
+            "ai_not_configured",
+            "Set OPENAI_API_KEY or explicitly choose TASKED_AI_PROVIDER=deterministic",
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(());
+    };
 
     let validated = match generate::validate(generated) {
         Ok(validated) => validated,
@@ -169,7 +208,6 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
         None,
     )
     .await?;
-    let intensity = intensity_from_db(&source.intensity);
     let calibration = calibrate(
         validated.program.tasks.clone(),
         validated.program.duration_days,
