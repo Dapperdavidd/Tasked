@@ -191,7 +191,26 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
 
     let mut tx = pool.begin().await?;
 
-    let generated = repair_sequential_cadence(generated);
+    let generated = repair_sequential_cadence(generated, classification.suggested_duration_days);
+    let generated = if matches!(
+        generated.kind,
+        ProgramKind::Curriculum | ProgramKind::Project
+    ) && generated.tasks.len() < usize::from(generated.duration_days)
+    {
+        // A valid JSON response can still be product-invalid when it leaves
+        // most days empty. Recompile the source deterministically rather than
+        // shipping a shallow plan just because the model returned something.
+        planner::compile(
+            &normalised.text,
+            source.instruction.as_deref(),
+            classification.kind,
+            classification.confidence,
+            classification.suggested_duration_days,
+            intensity,
+        )
+    } else {
+        generated
+    };
     let validated = match generate::validate(generated) {
         Ok(validated) => validated,
         Err(error) => {
@@ -262,8 +281,14 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
 /// cadence, even when the classifier identified a sequential curriculum or
 /// project. Repair that semantic mismatch deterministically instead of
 /// creating three copies of every task on every day.
-fn repair_sequential_cadence(mut program: GeneratedProgram) -> GeneratedProgram {
+fn repair_sequential_cadence(
+    mut program: GeneratedProgram,
+    requested_duration_days: Option<u16>,
+) -> GeneratedProgram {
     if matches!(program.kind, ProgramKind::Curriculum | ProgramKind::Project) {
+        if let Some(duration_days) = requested_duration_days {
+            program.duration_days = duration_days;
+        }
         let last_day = u32::from(program.duration_days.saturating_sub(1));
         for (index, task) in program.tasks.iter_mut().enumerate() {
             if matches!(task.cadence, tracked_core::cadence::Cadence::Daily) {
@@ -445,28 +470,28 @@ async fn release_job(
 
 fn classify_source(text: &str, instruction: Option<&str>) -> HeuristicClassification {
     let combined = format!("{text}\n{}", instruction.unwrap_or_default()).to_lowercase();
-    let suggested_duration_days = infer_duration_days(&combined);
+    let inferred_duration_days = infer_duration_days(&combined);
 
     if has_routine_markers(&combined) {
         return HeuristicClassification {
             kind: ProgramKind::Routine,
             confidence: 0.72,
-            suggested_duration_days,
+            suggested_duration_days: inferred_duration_days,
         };
     }
 
-    if has_curriculum_markers(&combined) {
+    if has_curriculum_markers(&combined) || has_learning_markers(&combined) {
         return HeuristicClassification {
             kind: ProgramKind::Curriculum,
-            confidence: 0.7,
-            suggested_duration_days,
+            confidence: 0.78,
+            suggested_duration_days: inferred_duration_days.or(Some(7)),
         };
     }
 
     HeuristicClassification {
         kind: ProgramKind::Project,
-        confidence: 0.62,
-        suggested_duration_days,
+        confidence: 0.7,
+        suggested_duration_days: inferred_duration_days.or(Some(7)),
     }
 }
 
@@ -556,6 +581,20 @@ fn has_curriculum_markers(text: &str) -> bool {
     .any(|marker| text.contains(marker))
 }
 
+fn has_learning_markers(text: &str) -> bool {
+    [
+        "learn ",
+        "study ",
+        "prepare for",
+        "get better at",
+        "master ",
+        "understand ",
+        "read ",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
+}
+
 fn ingest_error_code(message: &str) -> &str {
     if message.contains("scan") {
         "needs_ocr"
@@ -599,8 +638,8 @@ mod tests {
             Intensity::Standard,
         );
 
-        assert_eq!(generated.duration_days, 2);
-        assert_eq!(generated.tasks.len(), 6);
+        assert_eq!(generated.duration_days, 7);
+        assert_eq!(generated.tasks.len(), 21);
         assert!(generated
             .tasks
             .iter()
@@ -622,6 +661,13 @@ mod tests {
             .tasks
             .iter()
             .all(|task| task.description.is_some()));
+    }
+
+    #[test]
+    fn plain_learning_goal_is_a_curriculum_with_a_default_duration() {
+        let classification = classify_source("Learn Rust", None);
+        assert_eq!(classification.kind, ProgramKind::Curriculum);
+        assert_eq!(classification.suggested_duration_days, Some(7));
     }
 
     #[test]
@@ -647,7 +693,7 @@ mod tests {
             Intensity::Standard,
         );
 
-        assert_eq!(generated.tasks.len(), 6);
+        assert_eq!(generated.tasks.len(), 21);
         assert!(generated.tasks[0].title.contains("Run 30 min"));
         assert!(generated
             .tasks

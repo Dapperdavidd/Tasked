@@ -207,7 +207,7 @@ Every task must be a small focused-session action that starts with a concrete ve
 
 Use the requested duration and capacity. Create meaningful progression across multiple days. Respect prerequisites: foundations before dependent concepts, practice before projects, and review/checks after application. Do not invent URLs or claim research you did not perform. If the source names a resource, retain that source reference in the task description.
 
-For curriculum and project plans, every task must use cadence {"type":"once","day_offset":N}; use zero-based offsets from 0 through duration_days - 1. Use daily or weekly cadences only for routine plans. Never add fields that do not belong to the selected cadence variant.
+For curriculum and project plans, set duration_days to the requested duration and return at least one task for every day. Use cadence {"type":"once","day_offset":N}; use zero-based offsets from 0 through duration_days - 1. Use daily or weekly cadences only for routine plans. Never add fields that do not belong to the selected cadence variant.
 
 Keep the response compact: generate no more than 2 tasks per day of the plan, keep each title under 80 characters, keep each description under 160 characters, and return warnings as an empty array. Tasked computes warnings itself.
 
@@ -231,7 +231,7 @@ fn ollama_schema() -> Value {
             "confidence": { "type": "number" },
             "tasks": {
                 "type": "array",
-                "maxItems": 6,
+                "maxItems": 14,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn local_schema_is_bounded_for_small_models() {
         let schema = ollama_schema();
-        assert_eq!(schema["properties"]["tasks"]["maxItems"], 6);
+        assert_eq!(schema["properties"]["tasks"]["maxItems"], 14);
         assert_eq!(schema["properties"]["warnings"]["maxItems"], 0);
         assert_eq!(
             schema["properties"]["tasks"]["items"]["properties"]["description"]["maxLength"],
