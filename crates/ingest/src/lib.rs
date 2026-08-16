@@ -22,6 +22,7 @@
 pub mod calibrate;
 pub mod classify;
 pub mod generate;
+pub mod planner;
 pub mod source;
 pub mod types;
 

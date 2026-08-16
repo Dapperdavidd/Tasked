@@ -10,6 +10,7 @@ export type View =
   | "standing"
   | "heatmap"
   | "cohort"
+  | "reports"
   | "profile";
 
 export type SectionKind = "Program" | "Standing";
@@ -183,7 +184,7 @@ export class ApiClient {
     this.settings = settings;
   }
 
-  createSession(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos", displayName = "Dapper"): Promise<SessionResponse> {
+  createSession(timezone: string, displayName: string): Promise<SessionResponse> {
     return this.request<SessionResponse>("/v1/sessions", {
       method: "POST",
       body: { timezone, display_name: displayName },
