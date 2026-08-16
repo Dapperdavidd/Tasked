@@ -237,9 +237,13 @@ export function App(): ReactElement {
         String(form.get("instruction") ?? "")
       );
       let job = await client.ingest(created.job_id);
-      for (let attempt = 0; attempt < 8 && job.status !== "ready" && job.status !== "failed"; attempt += 1) {
-        await delay(750);
+      setState((current) => ({ ...current, ingest: job, status: jobLabel(job) }));
+      // Local models can need a minute on a cold start. Keep the review view
+      // alive for the whole job instead of returning a misleading half-state.
+      for (let attempt = 0; attempt < 180 && job.status !== "ready" && job.status !== "failed"; attempt += 1) {
+        await delay(1000);
         job = await client.ingest(created.job_id);
+        setState((current) => ({ ...current, ingest: job, status: jobLabel(job) }));
       }
       return { ingest: job };
     });
@@ -671,6 +675,7 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
           <button className="button primary" type="submit">Generate plan</button>
         </form>
         {props.job ? <p className="job-status">{jobLabel(props.job)}</p> : null}
+        {props.job && props.job.status !== "ready" && props.job.status !== "failed" ? <PlanBuildProgress status={props.job.status} /> : null}
         {blockedUpload ? <p className="job-status">Images and scanned PDFs need OCR support. For now, paste extracted text or upload a text document.</p> : null}
       </div>
       {draft ? <div className="panel">
@@ -690,6 +695,28 @@ function IngestView(props: { job: IngestJob | null; submit: (event: FormEvent<HT
         ))}
       </div> : null}
     </section>
+  );
+}
+
+function PlanBuildProgress(props: { status: IngestJob["status"] }): ReactElement {
+  const stages: Array<[IngestJob["status"], string]> = [
+    ["normalising", "Reading the source context"],
+    ["classifying", "Identifying the goal and domain"],
+    ["generating", "Building the prerequisite progression"],
+    ["calibrating", "Fitting tasks to your daily capacity"]
+  ];
+  const active = Math.max(0, stages.findIndex(([status]) => status === props.status));
+  return (
+    <div className="plan-build" aria-live="polite">
+      <div className="plan-build-head"><strong>Building your plan</strong><span>{Math.min(active + 1, stages.length)}/{stages.length}</span></div>
+      <div className="plan-build-track"><span style={{ width: `${((active + 1) / stages.length) * 100}%` }} /></div>
+      {stages.map(([status, label], index) => (
+        <div className={`plan-build-step ${index < active ? "complete" : ""} ${index === active ? "active" : ""}`} key={status}>
+          <span>{index < active ? "✓" : index === active ? "•" : "○"}</span>{label}
+        </div>
+      ))}
+      <p className="plan-build-note">The local model is working on the plan. You can keep this page open.</p>
+    </div>
   );
 }
 

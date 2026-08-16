@@ -461,6 +461,64 @@ h3 {
   font-size: 12px;
 }
 
+.plan-build {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(243, 239, 231, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.plan-build-head {
+  display: flex;
+  justify-content: space-between;
+  color: #f3efe7;
+  font-size: 13px;
+}
+
+.plan-build-head span,
+.plan-build-note {
+  color: #a8a39a;
+  font-size: 12px;
+}
+
+.plan-build-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.plan-build-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 300ms ease;
+}
+
+.plan-build-step {
+  color: #77736d;
+  font-size: 12px;
+}
+
+.plan-build-step span {
+  display: inline-block;
+  width: 20px;
+  color: inherit;
+}
+
+.plan-build-step.complete,
+.plan-build-step.active {
+  color: #f3efe7;
+}
+
+.plan-build-note {
+  margin: 4px 0 0;
+}
+
 .section-title span {
   color: #f3efe7;
 }
