@@ -6,12 +6,14 @@
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+use std::time::Duration;
 use tracked_ingest::{generate, GeneratedProgram, Intensity, ProgramKind};
 
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL: &str = "gpt-5-mini";
 const OLLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/api/chat";
 const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:3b";
+const DEFAULT_OLLAMA_TIMEOUT_SECONDS: u64 = 180;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
@@ -60,8 +62,9 @@ async fn generate_with_openai(
 ) -> Result<GeneratedProgram, IntelligenceError> {
     let key = std::env::var("OPENAI_API_KEY").map_err(|_| IntelligenceError::MissingOutput)?;
     let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
-    let (instructions, input, schema) =
+    let (instructions, input, _) =
         request_parts(source, instruction, kind, intensity, duration_hint);
+    let schema = ollama_schema();
     let body = json!({
         "model": model,
         "instructions": instructions,
@@ -139,7 +142,15 @@ async fn generate_with_ollama(
         "format": schema,
         "options": { "temperature": 0 }
     });
-    let response = reqwest::Client::new()
+    let timeout = std::env::var("OLLAMA_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_OLLAMA_TIMEOUT_SECONDS);
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(timeout))
+        .build()?;
+    let response = client
         .post(std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| OLLAMA_CHAT_URL.to_owned()))
         .json(&body)
         .send()
@@ -190,9 +201,54 @@ Every task must be a small focused-session action that starts with a concrete ve
 
 Use the requested duration and capacity. Create meaningful progression across multiple days. Respect prerequisites: foundations before dependent concepts, practice before projects, and review/checks after application. Do not invent URLs or claim research you did not perform. If the source names a resource, retain that source reference in the task description.
 
+Keep the response compact: generate no more than 3 tasks per day of the plan, and keep each description under 240 characters.
+
 Return only the requested structured object. Do not put markdown or commentary outside the schema.
 "#;
     (instructions.to_owned(), input, schema)
+}
+
+/// Ollama's structured decoder performs better with a compact schema than with
+/// the full recursive `schemars` document. The Rust type remains the source of
+/// truth: this is only a transport optimization for the local provider, and
+/// `generate::parse` plus validation still reject anything outside the contract.
+fn ollama_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "title": { "type": "string" },
+            "summary": { "type": "string" },
+            "kind": { "type": "string", "enum": ["curriculum", "routine", "project"] },
+            "duration_days": { "type": "integer" },
+            "confidence": { "type": "number" },
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "description": { "type": ["string", "null"] },
+                        "category": { "type": ["string", "null"] },
+                        "difficulty": { "type": "integer" },
+                        "estimated_minutes": { "type": "integer" },
+                        "cadence": {
+                            "type": "object",
+                            "properties": {
+                                "type": { "type": "string", "enum": ["daily", "weekly_days", "n_per_week", "once"] },
+                                "days": { "type": "array", "items": { "type": "integer" } },
+                                "count": { "type": "integer" },
+                                "day_offset": { "type": "integer" }
+                            },
+                            "required": ["type"]
+                        }
+                    },
+                    "required": ["title", "description", "category", "difficulty", "estimated_minutes", "cadence"]
+                }
+            },
+            "warnings": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["title", "summary", "kind", "duration_days", "confidence", "tasks", "warnings"]
+    })
 }
 
 #[cfg(test)]
