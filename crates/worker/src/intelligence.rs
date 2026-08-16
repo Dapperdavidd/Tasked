@@ -11,7 +11,7 @@ use tracked_ingest::{generate, GeneratedProgram, Intensity, ProgramKind};
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL: &str = "gpt-5-mini";
 const OLLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/api/chat";
-const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:7b";
+const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:3b";
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
