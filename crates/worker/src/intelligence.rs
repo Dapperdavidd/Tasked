@@ -14,7 +14,7 @@ const DEFAULT_MODEL: &str = "gpt-5-mini";
 const OLLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/api/chat";
 const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:1.5b";
 const DEFAULT_OLLAMA_TIMEOUT_SECONDS: u64 = 180;
-const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS: u64 = 700;
+const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS: u64 = 900;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
@@ -209,7 +209,7 @@ Use the requested duration and capacity. Create meaningful progression across mu
 
 For curriculum and project plans, set duration_days to the requested duration and return at least one task for every day. Use cadence {"type":"once","day_offset":N}; use zero-based offsets from 0 through duration_days - 1. Use daily or weekly cadences only for routine plans. Never add fields that do not belong to the selected cadence variant.
 
-Keep the response compact: generate no more than 2 tasks per day of the plan, keep each title under 80 characters, keep each description under 160 characters, and return warnings as an empty array. Tasked computes warnings itself.
+Keep the response compact: generate exactly 1 task per day for sequential plans, keep each title under 60 characters, keep each description under 100 characters, and return warnings as an empty array. Tasked computes warnings itself.
 
 Return only the requested structured object. Do not put markdown or commentary outside the schema.
 "#;
@@ -224,8 +224,8 @@ fn ollama_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "title": { "type": "string", "maxLength": 80 },
-            "summary": { "type": "string", "maxLength": 240 },
+            "title": { "type": "string", "maxLength": 60 },
+            "summary": { "type": "string", "maxLength": 120 },
             "kind": { "type": "string", "enum": ["curriculum", "routine", "project"] },
             "duration_days": { "type": "integer" },
             "confidence": { "type": "number" },
@@ -235,8 +235,8 @@ fn ollama_schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "title": { "type": "string", "maxLength": 80 },
-                        "description": { "type": "string", "maxLength": 160 },
+                        "title": { "type": "string", "maxLength": 60 },
+                        "description": { "type": "string", "maxLength": 100 },
                         "category": { "type": "string" },
                         "difficulty": { "type": "integer" },
                         "estimated_minutes": { "type": "integer" },
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(schema["properties"]["warnings"]["maxItems"], 0);
         assert_eq!(
             schema["properties"]["tasks"]["items"]["properties"]["description"]["maxLength"],
-            160
+            100
         );
     }
 }
