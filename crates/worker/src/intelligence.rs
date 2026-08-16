@@ -14,7 +14,7 @@ const DEFAULT_MODEL: &str = "gpt-5-mini";
 const OLLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/api/chat";
 const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:1.5b";
 const DEFAULT_OLLAMA_TIMEOUT_SECONDS: u64 = 180;
-const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS: u64 = 420;
+const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS: u64 = 700;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntelligenceError {
@@ -210,7 +210,7 @@ Use the requested duration and capacity. Create meaningful progression across mu
 
 For curriculum and project plans, every task must use cadence {"type":"once","day_offset":N}; use zero-based offsets from 0 through duration_days - 1. Use daily or weekly cadences only for routine plans. Never add fields that do not belong to the selected cadence variant.
 
-Keep the response compact: generate no more than 3 tasks per day of the plan, and keep each description under 240 characters.
+Keep the response compact: generate no more than 2 tasks per day of the plan, and keep each description under 160 characters.
 
 Return only the requested structured object. Do not put markdown or commentary outside the schema.
 "#;
