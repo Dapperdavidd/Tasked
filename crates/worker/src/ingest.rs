@@ -513,6 +513,7 @@ fn classify_source(text: &str, instruction: Option<&str>) -> HeuristicClassifica
     }
 }
 
+#[cfg(test)]
 fn generate_program(
     text: &str,
     instruction: Option<&str>,
