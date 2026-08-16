@@ -143,9 +143,18 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
     // for validation and the final draft write.
     tx.commit().await?;
     let intensity = intensity_from_db(&source.intensity);
-    let generated = if intelligence::configured()
-        && !(intelligence::local_mode() && classification.suggested_duration_days.unwrap_or(7) > 7)
-    {
+    let use_deterministic_compiler = intelligence::deterministic_mode()
+        || (intelligence::local_mode() && classification.suggested_duration_days.unwrap_or(7) > 7);
+    let generated = if use_deterministic_compiler {
+        planner::compile(
+            &normalised.text,
+            source.instruction.as_deref(),
+            classification.kind,
+            classification.confidence,
+            classification.suggested_duration_days,
+            intensity,
+        )
+    } else if intelligence::configured() {
         match intelligence::generate_program(
             &normalised.text,
             source.instruction.as_deref(),
@@ -184,13 +193,6 @@ async fn process_one(pool: &PgPool, job: ClaimedJob) -> Result<(), IngestError> 
                 return Ok(());
             }
         }
-    } else if intelligence::deterministic_mode() {
-        generate_program(
-            &normalised.text,
-            source.instruction.as_deref(),
-            &classification,
-            intensity,
-        )
     } else {
         let mut failure_tx = pool.begin().await?;
         fail_ingestion(
