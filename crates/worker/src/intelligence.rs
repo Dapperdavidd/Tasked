@@ -210,7 +210,7 @@ Use the requested duration and capacity. Create meaningful progression across mu
 
 For curriculum and project plans, every task must use cadence {"type":"once","day_offset":N}; use zero-based offsets from 0 through duration_days - 1. Use daily or weekly cadences only for routine plans. Never add fields that do not belong to the selected cadence variant.
 
-Keep the response compact: generate no more than 2 tasks per day of the plan, and keep each description under 160 characters.
+Keep the response compact: generate no more than 2 tasks per day of the plan, keep each title under 80 characters, keep each description under 160 characters, and return warnings as an empty array. Tasked computes warnings itself.
 
 Return only the requested structured object. Do not put markdown or commentary outside the schema.
 "#;
@@ -225,18 +225,19 @@ fn ollama_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "title": { "type": "string" },
-            "summary": { "type": "string" },
+            "title": { "type": "string", "maxLength": 80 },
+            "summary": { "type": "string", "maxLength": 240 },
             "kind": { "type": "string", "enum": ["curriculum", "routine", "project"] },
             "duration_days": { "type": "integer" },
             "confidence": { "type": "number" },
             "tasks": {
                 "type": "array",
+                "maxItems": 6,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "title": { "type": "string" },
-                        "description": { "type": "string" },
+                        "title": { "type": "string", "maxLength": 80 },
+                        "description": { "type": "string", "maxLength": 160 },
                         "category": { "type": "string" },
                         "difficulty": { "type": "integer" },
                         "estimated_minutes": { "type": "integer" },
@@ -254,7 +255,7 @@ fn ollama_schema() -> Value {
                     "required": ["title", "description", "category", "difficulty", "estimated_minutes", "cadence"]
                 }
             },
-            "warnings": { "type": "array", "items": { "type": "object" } }
+            "warnings": { "type": "array", "maxItems": 0, "items": { "type": "object" } }
         },
         "required": ["title", "summary", "kind", "duration_days", "confidence", "tasks", "warnings"]
     })
