@@ -189,10 +189,15 @@ pub async fn create_ingest(
     tx.commit().await?;
 
     if status == "queued" {
-        tracked_worker::ingest::process_ingestion_job(&state.pool, job_id)
-            .await
-            .map(|_| ())
-            .map_err(|error| ApiError::Worker(error.to_string()))?;
+        // Local model generation can take a minute on first load. Keep the
+        // HTTP request responsive and let the status/event endpoints report
+        // progress while the worker claims the queued job.
+        let pool = state.pool.clone();
+        actix_web::rt::spawn(async move {
+            if let Err(error) = tracked_worker::ingest::process_ingestion_job(&pool, job_id).await {
+                eprintln!("background ingest job {job_id} failed: {error}");
+            }
+        });
     }
 
     Ok(HttpResponse::Ok().json(CreateIngestResponse {

@@ -201,6 +201,8 @@ Every task must be a small focused-session action that starts with a concrete ve
 
 Use the requested duration and capacity. Create meaningful progression across multiple days. Respect prerequisites: foundations before dependent concepts, practice before projects, and review/checks after application. Do not invent URLs or claim research you did not perform. If the source names a resource, retain that source reference in the task description.
 
+For curriculum and project plans, every task must use cadence {"type":"once","day_offset":N}; use zero-based offsets from 0 through duration_days - 1. Use daily or weekly cadences only for routine plans. Never add fields that do not belong to the selected cadence variant.
+
 Keep the response compact: generate no more than 3 tasks per day of the plan, and keep each description under 240 characters.
 
 Return only the requested structured object. Do not put markdown or commentary outside the schema.
